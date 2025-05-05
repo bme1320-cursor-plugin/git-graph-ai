@@ -597,13 +597,9 @@ class SettingsWidget {
 			let issueRegex = (<string>values[0]).trim(), issueUrl = (<string>values[1]).trim(), useGlobally = <boolean>values[2];
 			let regExpParseError = null;
 			try {
-				if (issueRegex.indexOf('(') === -1 || issueRegex.indexOf(')') === -1) {
-					regExpParseError = 'The regular expression does not contain a capturing group ( ).';
-				} else if (new RegExp(issueRegex, 'gu')) {
-					regExpParseError = null;
-				}
+				new RegExp(issueRegex);
 			} catch (e) {
-				regExpParseError = e.message;
+				regExpParseError = e instanceof Error ? e.message : 'Invalid Regex';
 			}
 			if (regExpParseError !== null) {
 				dialog.showError('Invalid Issue Regex', regExpParseError, 'Go Back', () => {

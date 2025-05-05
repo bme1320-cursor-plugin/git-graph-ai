@@ -65,7 +65,7 @@ export class AvatarManager extends Disposable {
 	 */
 	private stopInterval() {
 		if (this.interval !== null) {
-			clearInterval(this.interval);
+			clearInterval(this.interval as any);
 			this.interval = null;
 			this.remoteSourceCache = {};
 		}
@@ -449,6 +449,15 @@ export class AvatarManager extends Disposable {
 			),
 			() => this.logger.log('Failed to Send Avatar for ' + maskEmail(email) + ' to the Git Graph View')
 		);
+	}
+
+	/**
+	 * Dispose the AvatarManager.
+	 */
+	public dispose() {
+		super.dispose();
+		// Cast timer to any to resolve type mismatch
+		clearInterval(this.interval as any);
 	}
 }
 

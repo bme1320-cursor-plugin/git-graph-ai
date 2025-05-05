@@ -478,7 +478,7 @@ function observeElemScroll(id: string, initialScrollTop: number, onScroll: (scro
 
 		onScroll(elem.scrollTop);
 
-		if (timeout !== null) clearTimeout(timeout);
+		if (timeout !== null) clearTimeout(timeout as any);
 		timeout = setTimeout(() => {
 			onScrolled();
 			timeout = null;

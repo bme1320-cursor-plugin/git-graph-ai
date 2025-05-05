@@ -2,6 +2,12 @@
 .vscode/
 coverage/
 node_modules/*/*.md
+
+# Ignore all node_modules initially
+node_modules/**
+# But DO include iconv-lite
+!node_modules/iconv-lite/**
+
 out/**/*.d.ts
 out/**/*.js.map
 out/*.d.ts

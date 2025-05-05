@@ -48,7 +48,7 @@ class FindWidget {
 				}
 				handledEvent(e);
 			} else {
-				if (keyupTimeout !== null) clearTimeout(keyupTimeout);
+				if (keyupTimeout !== null) clearTimeout(keyupTimeout as any);
 				keyupTimeout = setTimeout(() => {
 					keyupTimeout = null;
 					if (this.text !== this.inputElem.value) {
@@ -215,7 +215,10 @@ class FindWidget {
 		this.position = -1;
 
 		if (this.text !== '') {
-			let colVisibility = this.view.getColumnVisibility(), findPattern: RegExp | null, findGlobalPattern: RegExp | null;
+			let colVisibility = this.view.getColumnVisibility();
+			let findPattern: RegExp | null = null;
+			let findGlobalPattern: RegExp | null = null;
+
 			const regexText = workspaceState.findIsRegex ? this.text : this.text.replace(/[\\\[\](){}|.*+?^$]/g, '\\$&'), flags = 'u' + (workspaceState.findIsCaseSensitive ? '' : 'i');
 			try {
 				findPattern = new RegExp(regexText, flags);
@@ -224,12 +227,13 @@ class FindWidget {
 			} catch (e) {
 				findPattern = null;
 				findGlobalPattern = null;
-				this.widgetElem.setAttribute(ATTR_ERROR, e.message);
+				this.matches = [];
+				this.widgetElem.setAttribute(ATTR_ERROR, e instanceof Error ? e.message : 'Invalid Regex');
 			}
+
 			if (findPattern !== null && findGlobalPattern !== null) {
 				let commitElems = getCommitElems(), j = 0, commit, zeroLengthMatch = false;
 
-				// Search the commit data itself to detect commits that match, so that dom tree traversal is performed on matching commit rows (for performance)
 				const commits = this.view.getCommits();
 				for (let i = 0; i < commits.length; i++) {
 					commit = commits[i];
@@ -250,7 +254,6 @@ class FindWidget {
 
 						this.matches.push({ hash: commit.hash, elem: commitElems[j] });
 
-						// Highlight matches
 						let textElems = getChildNodesWithTextContent(commitElems[j]), textElem;
 						for (let k = 0; k < textElems.length; k++) {
 							textElem = textElems[k];
@@ -262,36 +265,28 @@ class FindWidget {
 									break;
 								}
 								if (matchEnd !== match.index) {
-									// This match isn't immediately after the previous match, or isn't at the beginning of the text
 									if (matchStart !== matchEnd) {
-										// There was a previous match, insert it in a text node
 										textElem.parentNode!.insertBefore(FindWidget.createMatchElem(text.substring(matchStart, matchEnd)), textElem);
 									}
-									// Insert a text node containing the text between the last match and the current match
 									textElem.parentNode!.insertBefore(document.createTextNode(text.substring(matchEnd, match.index)), textElem);
 									matchStart = match.index;
 								}
 								matchEnd = findGlobalPattern.lastIndex;
 							}
 							if (matchEnd > 0) {
-								// There were one or more matches
 								if (matchStart !== matchEnd) {
-									// There was a match, insert it in a text node
 									textElem.parentNode!.insertBefore(FindWidget.createMatchElem(text.substring(matchStart, matchEnd)), textElem);
 								}
 								if (matchEnd !== text.length) {
-									// There was some text after last match, update the textElem (the last node of it's parent) to contain the remaining text.
 									textElem.textContent = text.substring(matchEnd);
 								} else {
-									// The last match was at the end of the text, the textElem is no longer required, so delete it
 									textElem.parentNode!.removeChild(textElem);
 								}
 							}
 							if (zeroLengthMatch) break;
 						}
 						if (colVisibility.commit && commit.hash.search(findPattern) === 0 && !findPattern.test(abbrevCommit(commit.hash)) && textElems.length > 0) {
-							// The commit matches on more than the abbreviated commit, so the commit should be highlighted
-							let commitNode = textElems[textElems.length - 1]; // Commit is always the last column if it is visible
+							let commitNode = textElems[textElems.length - 1];
 							commitNode.parentNode!.replaceChild(FindWidget.createMatchElem(commitNode.textContent!), commitNode);
 						}
 						if (zeroLengthMatch) break;
@@ -332,7 +327,6 @@ class FindWidget {
 				matchElem = matchElems[j];
 				let text = matchElem.childNodes[0].textContent!;
 
-				// Combine current text with the text from previous sibling text nodes
 				let node = matchElem.previousSibling, elem = matchElem.previousElementSibling;
 				while (node !== null && node !== elem && node.textContent !== null) {
 					text = node.textContent + text;
@@ -340,7 +334,6 @@ class FindWidget {
 					node = matchElem.previousSibling;
 				}
 
-				// Combine current text with the text from next sibling text nodes
 				node = matchElem.nextSibling;
 				elem = matchElem.nextElementSibling;
 				while (node !== null && node !== elem && node.textContent !== null) {

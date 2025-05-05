@@ -354,7 +354,8 @@ class Dropdown {
 	 */
 	private clearDoubleClickTimeout() {
 		if (this.doubleClickTimeout !== null) {
-			clearTimeout(this.doubleClickTimeout);
+			// Cast timer to any to resolve type mismatch
+			clearTimeout(this.doubleClickTimeout as any);
 			this.doubleClickTimeout = null;
 		}
 	}

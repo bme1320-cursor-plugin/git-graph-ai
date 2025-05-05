@@ -57,7 +57,7 @@ export class RepoFileWatcher {
 		}
 		if (this.refreshTimeout !== null) {
 			// If a timeout is active, clear it
-			clearTimeout(this.refreshTimeout);
+			clearTimeout(this.refreshTimeout as any);
 			this.refreshTimeout = null;
 		}
 	}
@@ -77,7 +77,6 @@ export class RepoFileWatcher {
 		this.resumeAt = (new Date()).getTime() + 1500;
 	}
 
-
 	/**
 	 * Handle a file event triggered by the File System Watcher.
 	 * @param uri The URI of the file that the event occurred on.
@@ -88,11 +87,21 @@ export class RepoFileWatcher {
 		if ((new Date()).getTime() < this.resumeAt) return;
 
 		if (this.refreshTimeout !== null) {
-			clearTimeout(this.refreshTimeout);
+			clearTimeout(this.refreshTimeout as any);
 		}
 		this.refreshTimeout = setTimeout(() => {
 			this.refreshTimeout = null;
 			this.repoChangeCallback();
 		}, 750);
+	}
+
+	/**
+	 * Dispose of the file watcher.
+	 */
+	public dispose() {
+		clearTimeout(this.refreshTimeout as any);
+		this.fsWatcher?.dispose();
+		this.fsWatcher = null;
+		this.logger.log('Stopped watching repo: ' + this.repo);
 	}
 }

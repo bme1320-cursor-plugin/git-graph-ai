@@ -901,7 +901,7 @@ class Graph {
 		}
 
 		if (this.tooltipTimeout !== null) {
-			clearTimeout(this.tooltipTimeout);
+			clearTimeout(this.tooltipTimeout as any);
 			this.tooltipTimeout = null;
 		}
 

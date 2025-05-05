@@ -2014,7 +2014,7 @@ class GitGraphView {
 				}
 			}
 
-			if (timeout !== null) clearTimeout(timeout);
+			if (timeout !== null) clearTimeout(timeout as any);
 			timeout = setTimeout(() => {
 				this.scrollTop = scrollTop;
 				this.saveState();

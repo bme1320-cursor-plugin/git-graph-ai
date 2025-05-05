@@ -604,23 +604,31 @@ export function resolveSpawnOutput(cmd: cp.ChildProcess) {
 				resolve({ code: -1, error: error });
 				resolved = true;
 			});
-			cmd.on('exit', (code) => {
+			cmd.on('exit', (code, _signal) => {
 				if (resolved) return;
-				resolve({ code: code, error: null });
+				resolve({ code: code!, error: null });
 				resolved = true;
 			});
 		}),
 		new Promise<Buffer>((resolve) => {
 			// stdout promise
 			let buffers: Buffer[] = [];
-			cmd.stdout.on('data', (b: Buffer) => { buffers.push(b); });
-			cmd.stdout.on('close', () => resolve(Buffer.concat(buffers)));
+			if (cmd.stdout) {
+				cmd.stdout.on('data', (b: Buffer) => { buffers.push(b); });
+				cmd.stdout.on('close', () => resolve(Buffer.concat(buffers)));
+			} else {
+				resolve(Buffer.from(''));
+			}
 		}),
 		new Promise<string>((resolve) => {
 			// stderr promise
 			let stderr = '';
-			cmd.stderr.on('data', (d) => { stderr += d; });
-			cmd.stderr.on('close', () => resolve(stderr));
+			if (cmd.stderr) {
+				cmd.stderr.on('data', (d) => { stderr += d; });
+				cmd.stderr.on('close', () => resolve(stderr));
+			} else {
+				resolve('');
+			}
 		})
 	]);
 }

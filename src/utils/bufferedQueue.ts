@@ -27,7 +27,7 @@ export class BufferedQueue<T> extends Disposable {
 
 		this.registerDisposable(toDisposable(() => {
 			if (this.timeout !== null) {
-				clearTimeout(this.timeout);
+				clearTimeout(this.timeout as any);
 				this.timeout = null;
 			}
 		}));
@@ -46,7 +46,7 @@ export class BufferedQueue<T> extends Disposable {
 
 		if (!this.processing) {
 			if (this.timeout !== null) {
-				clearTimeout(this.timeout);
+				clearTimeout(this.timeout as any);
 			}
 			this.timeout = setTimeout(() => {
 				this.timeout = null;
@@ -68,5 +68,12 @@ export class BufferedQueue<T> extends Disposable {
 		}
 		this.processing = false;
 		if (changes) this.onChanges();
+	}
+
+	public dispose() {
+		super.dispose();
+		clearTimeout(this.timeout as any);
+		this.queue.length = 0;
+		this.onChanges = () => { };
 	}
 }
