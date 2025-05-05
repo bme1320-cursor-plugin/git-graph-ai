@@ -7,6 +7,7 @@ import { ExtensionState } from './extensionState';
 import { Logger } from './logger';
 import { RepoFileWatcher } from './repoFileWatcher';
 import { RepoManager } from './repoManager';
+import { GitCommitComparisonData } from './types';
 import { ErrorInfo, GitConfigLocation, GitGraphViewInitialState, GitPushBranchMode, GitRepoSet, LoadGitGraphViewTo, RequestMessage, ResponseMessage, TabIconColourTheme } from './types';
 import { UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, archive, copyFilePathToClipboard, copyToClipboard, createPullRequest, getNonce, openExtensionSettings, openExternalUrl, openFile, showErrorMessage, viewDiff, viewDiffWithWorkingFile, viewFileAtRevision, viewScm } from './utils';
 import { Disposable, toDisposable } from './utils/disposable';
@@ -254,7 +255,7 @@ export class GitGraphView extends Disposable {
 				});
 				break;
 			case 'compareCommits':
-				const comparisonData = await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash);
+				const comparisonData = await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash) as GitCommitComparisonData;
 				this.sendMessage({
 					command: 'compareCommits',
 					commitHash: msg.commitHash,

@@ -21,81 +21,81 @@ const AI_SERVICE_PATH = '/analyze_diff';
  * @returns A Promise resolving to the AIAnalysis object or null if analysis fails.
  */
 export function analyzeDiff(
-    filePath: string,
-    fileDiff: string,
-    contentBefore: string | null,
-    contentAfter: string | null,
-    logger?: Logger
+	filePath: string,
+	fileDiff: string,
+	contentBefore: string | null,
+	contentAfter: string | null,
+	logger?: Logger
 ): Promise<AIAnalysis | null> {
-    return new Promise((resolve) => {
-        const postData = JSON.stringify({
-            file_path: filePath,
-            file_diff: fileDiff,
-            content_before: contentBefore,
-            content_after: contentAfter,
-        });
+	return new Promise((resolve) => {
+		const postData = JSON.stringify({
+			file_path: filePath,
+			file_diff: fileDiff,
+			content_before: contentBefore,
+			content_after: contentAfter
+		});
 
-        const options: http.RequestOptions = {
-            hostname: AI_SERVICE_HOST,
-            port: AI_SERVICE_PORT,
-            path: AI_SERVICE_PATH,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData),
-            },
-            timeout: 5000 // 5 second timeout
-        };
+		const options: http.RequestOptions = {
+			hostname: AI_SERVICE_HOST,
+			port: AI_SERVICE_PORT,
+			path: AI_SERVICE_PATH,
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Content-Length': Buffer.byteLength(postData)
+			},
+			timeout: 5000 // 5 second timeout
+		};
 
-        logger?.log(`[AI Service] Sending request to analyze diff for: ${filePath}`);
+		logger?.log(`[AI Service] Sending request to analyze diff for: ${filePath}`);
 
-        const req = http.request(options, (res) => {
-            let responseBody = '';
-            res.setEncoding('utf8');
+		const req = http.request(options, (res) => {
+			let responseBody = '';
+			res.setEncoding('utf8');
 
-            res.on('data', (chunk) => {
-                responseBody += chunk;
-            });
+			res.on('data', (chunk) => {
+				responseBody += chunk;
+			});
 
-            res.on('end', () => {
-                if (res.statusCode === 200) {
-                    try {
-                        const parsedData = JSON.parse(responseBody);
-                        if (parsedData && parsedData.analysis) {
-                            logger?.log(`[AI Service] Received analysis for: ${filePath}`);
-                            resolve(parsedData.analysis as AIAnalysis);
-                        } else {
-                            logger?.logError(`[AI Service] Invalid response format from AI service for ${filePath}: ${responseBody}`);
-                            resolve(null);
-                        }
-                    } catch (e: any) {
-                        logger?.logError(`[AI Service] Error parsing JSON response for ${filePath}: ${e} - Response: ${responseBody}`);
-                        resolve(null);
-                    }
-                } else {
-                    logger?.logError(`[AI Service] Request failed for ${filePath} - Status Code: ${res.statusCode} - Response: ${responseBody}`);
-                    resolve(null);
-                }
-            });
-        });
+			res.on('end', () => {
+				if (res.statusCode === 200) {
+					try {
+						const parsedData = JSON.parse(responseBody);
+						if (parsedData && parsedData.analysis) {
+							logger?.log(`[AI Service] Received analysis for: ${filePath}`);
+							resolve(parsedData.analysis as AIAnalysis);
+						} else {
+							logger?.logError(`[AI Service] Invalid response format from AI service for ${filePath}: ${responseBody}`);
+							resolve(null);
+						}
+					} catch (e: any) {
+						logger?.logError(`[AI Service] Error parsing JSON response for ${filePath}: ${e} - Response: ${responseBody}`);
+						resolve(null);
+					}
+				} else {
+					logger?.logError(`[AI Service] Request failed for ${filePath} - Status Code: ${res.statusCode} - Response: ${responseBody}`);
+					resolve(null);
+				}
+			});
+		});
 
-        req.on('error', (e: Error) => {
-            logger?.logError(`[AI Service] Request error for ${filePath}: ${e.message}`);
-            if (e.message.includes('ECONNREFUSED')) {
-                logger?.logError('[AI Service] Connection refused. Is the Python AI server running?');
-                // Optionally show a user-facing message here if desired, but often background errors are just logged.
-            }
-            resolve(null);
-        });
+		req.on('error', (e: Error) => {
+			logger?.logError(`[AI Service] Request error for ${filePath}: ${e.message}`);
+			if (e.message.includes('ECONNREFUSED')) {
+				logger?.logError('[AI Service] Connection refused. Is the Python AI server running?');
+				// Optionally show a user-facing message here if desired, but often background errors are just logged.
+			}
+			resolve(null);
+		});
 
-        req.on('timeout', () => {
-             logger?.logError(`[AI Service] Request timed out for ${filePath}.`);
-             req.destroy(new Error('Request timed out'));
-             resolve(null);
-        });
+		req.on('timeout', () => {
+			logger?.logError(`[AI Service] Request timed out for ${filePath}.`);
+			req.destroy(new Error('Request timed out'));
+			resolve(null);
+		});
 
-        // Write data to request body
-        req.write(postData);
-        req.end();
-    });
-} 
+		// Write data to request body
+		req.write(postData);
+		req.end();
+	});
+}

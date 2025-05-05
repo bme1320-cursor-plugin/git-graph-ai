@@ -1,4 +1,4 @@
-# Git Graph extension for Visual Studio Code
+# AI EnhancedGit Graph extension for Visual Studio Code
 
 View a Git Graph of your repository, and easily perform Git actions from the graph. Configurable to look the way you want!
 

@@ -1,13 +1,13 @@
 {
-	"name": "git-graph",
-	"displayName": "Git Graph",
-	"version": "1.30.0",
-	"publisher": "mhutchie",
+	"name": "git-graph-ai-beta",
+	"displayName": "Git Graph - AI Enhanced",
+	"version": "2.0.0",
+	"publisher": "rhfeiyang",
 	"author": {
-		"name": "Michael Hutchison",
-		"email": "mhutchie@16right.com"
+		"name": "rhfeiyang",
+		"email": "rhfeiyang@qq.com"
 	},
-	"description": "View a Git Graph of your repository, and perform Git actions from the graph.",
+	"description": "View a Git Graph of your repository, and perform Git actions from the graph. AI Enhanced.",
 	"keywords": [
 		"git",
 		"graph",

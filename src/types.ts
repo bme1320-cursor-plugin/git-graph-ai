@@ -1404,3 +1404,14 @@ export type DeepWriteable<T> = T extends PrimitiveTypes
 	: T extends (Array<infer U> | ReadonlyArray<infer U>)
 	? Array<DeepWriteable<U>>
 	: { -readonly [K in keyof T]: DeepWriteable<T[K]> };
+
+export interface GitCommitDetailsData {
+	readonly commitDetails: GitCommitDetails | null;
+	readonly error: ErrorInfo;
+}
+
+export interface GitCommitComparisonData {
+	readonly fileChanges: GitFileChange[];
+	readonly aiAnalysis?: AIAnalysis | null; // Add AI analysis field
+	readonly error: ErrorInfo;
+}

@@ -350,7 +350,7 @@ export class DataSource extends Disposable {
 		return Promise.all([
 			this.getCommitDetailsBase(repo, commitHash),
 			this.getDiffNameStatus(repo, fromCommit, commitHash),
-			this.getDiffNumStat(repo, fromCommit, commitHash),
+			this.getDiffNumStat(repo, fromCommit, commitHash)
 		]).then(async (results) => {
 			const commitDetailsBase = results[0];
 			commitDetailsBase.fileChanges = generateFileChanges(results[1], results[2], null);
@@ -459,11 +459,11 @@ export class DataSource extends Disposable {
 	 * @returns The comparison details.
 	 */
 	public getCommitComparison(repo: string, fromHash: string, toHash: string): Promise<GitCommitComparisonData> {
-		return Promise.all<DiffNameStatusRecord[], DiffNumStatRecord[], GitStatusFiles | null>([
+		return Promise.all([
 			this.getDiffNameStatus(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
 			this.getDiffNumStat(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
 			toHash === UNCOMMITTED ? this.getStatus(repo) : Promise.resolve(null)
-		]).then(async (results) => {
+		]).then(async (results: [DiffNameStatusRecord[], DiffNumStatRecord[], GitStatusFiles | null]) => {
 			const fileChanges = generateFileChanges(results[0], results[1], results[2]);
 
 			// Placeholder: Fetch AI analysis for the first text file changed in the comparison
