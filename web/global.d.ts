@@ -21,6 +21,11 @@ declare global {
 
 	type AvatarImageCollection = { [email: string]: string };
 
+	interface AIAnalysis {
+		summary: string;
+		// Potentially add more fields later
+	}
+
 	interface ExpandedCommit {
 		index: number;
 		commitHash: string;
@@ -34,6 +39,7 @@ declare global {
 		codeReview: GG.CodeReview | null;
 		lastViewedFile: string | null;
 		loading: boolean;
+		aiAnalysis: AIAnalysis | null;
 		scrollTop: {
 			summary: number,
 			fileView: number
@@ -124,5 +130,6 @@ declare global {
 	}
 }
 
+// Add back the namespace exports
 export as namespace GG;
 export = GG;

@@ -1,3 +1,5 @@
+import { AIAnalysis } from './aiService';
+
 /* Git Interfaces / Types */
 
 export interface GitCommit {
@@ -41,6 +43,7 @@ export interface GitCommitDetails {
 	readonly signature: GitSignature | null;
 	readonly body: string;
 	readonly fileChanges: ReadonlyArray<GitFileChange>;
+	readonly aiAnalysis?: AIAnalysis | null; // Optional: analysis might fail or not be applicable
 }
 
 export const enum GitSignatureStatus {
@@ -692,6 +695,7 @@ export interface ResponseCommitDetails extends ResponseWithErrorInfo {
 	readonly avatar: string | null;
 	readonly codeReview: CodeReview | null;
 	readonly refresh: boolean;
+	readonly aiAnalysis?: AIAnalysis | null; // Add AI Analysis field
 }
 
 export interface RequestCompareCommits extends RepoRequest {
@@ -709,6 +713,7 @@ export interface ResponseCompareCommits extends ResponseWithErrorInfo {
 	readonly fileChanges: ReadonlyArray<GitFileChange>;
 	readonly codeReview: CodeReview | null;
 	readonly refresh: boolean;
+	readonly aiAnalysis?: AIAnalysis | null;
 }
 
 export interface RequestCopyFilePath extends RepoRequest {

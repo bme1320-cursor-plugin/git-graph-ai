@@ -1,0 +1,20 @@
+#cdvAiAnalysis {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid var(--vscode-editorWidget-border);
+}
+
+#cdvAiAnalysis h4 {
+    margin: 0 0 5px 0;
+    font-size: var(--vscode-font-size);
+    font-weight: bold;
+    color: var(--vscode-foreground);
+}
+
+#cdvAiAnalysis .aiSummary {
+    margin: 0;
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-editor-foreground);
+    white-space: pre-wrap; /* Preserve whitespace and line breaks */
+    word-wrap: break-word; /* Break long words */
+} 

@@ -161,6 +161,48 @@ This extension contributes the following commands:
 
 Detailed Release Notes are available [here](CHANGELOG.md).
 
+## Development
+
+To work on features involving the AI service, you need to run the local Python server:
+
+1.  **Navigate to the AI service directory:**
+    ```bash
+    cd ai_service
+    ```
+2.  **Set up the AI Service Environment:**
+    *   **(Recommended)** Create and activate a Python virtual environment:
+        ```bash
+        python -m venv venv
+        source venv/bin/activate  # On Linux/macOS
+        # venv\Scripts\activate  # On Windows
+        ```
+    *   Install dependencies:
+        ```bash
+        pip install -r requirements.txt
+        ```
+3.  **Configure OpenAI API Key:**
+    *   Obtain an API Key from the [OpenAI Platform](https://platform.openai.com/api-keys).
+    *   Set the `OPENAI_API_KEY` environment variable. **Do not hardcode your key in the code.**
+        *   Linux/macOS (temporary):
+            ```bash
+            export OPENAI_API_KEY='YOUR_API_KEY'
+            ```
+        *   Windows CMD (temporary):
+            ```bash
+            set OPENAI_API_KEY=YOUR_API_KEY
+            ```
+        *   Windows PowerShell (temporary):
+            ```powershell
+            $env:OPENAI_API_KEY = 'YOUR_API_KEY'
+            ```
+        *   For a more permanent solution, add it to your system's environment variables or use a `.env` file management library if preferred.
+    *   Replace `YOUR_API_KEY` with your actual OpenAI API key.
+4.  **Run the server:**
+    ```bash
+    python server.py
+    ```
+    The server will run on `http://localhost:5111` (or `http://127.0.0.1:5111`). The extension backend will communicate with this local server when performing AI analysis.
+
 ## Visual Studio Marketplace
 
 This extension is available on the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=mhutchie.git-graph) for Visual Studio Code.

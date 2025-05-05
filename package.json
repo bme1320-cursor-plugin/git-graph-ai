@@ -1512,16 +1512,16 @@
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "pnpm run compile",
 		"vscode:uninstall": "node ./out/life-cycle/uninstall.js",
 		"clean": "node ./.vscode/clean.js",
-		"compile": "npm run lint && npm run clean && npm run compile-src && npm run compile-web",
+		"compile": "pnpm run lint && pnpm run clean && pnpm run compile-src && pnpm run compile-web",
 		"compile-src": "tsc -p ./src && node ./.vscode/package-src.js",
 		"compile-web": "tsc -p ./web && node ./.vscode/package-web.js",
 		"compile-web-debug": "tsc -p ./web && node ./.vscode/package-web.js debug",
 		"lint": "eslint -c .eslintrc.json --max-warnings 0 --ext .ts ./src ./tests ./web",
-		"package": "vsce package",
-		"package-and-install": "npm run package && node ./.vscode/install-package.js",
+		"package": "pnpm exec vsce package --no-dependencies",
+		"package-and-install": "pnpm run package && node ./.vscode/install-package.js",
 		"test": "jest --verbose",
 		"test-and-report-coverage": "jest --verbose --coverage"
 	},

@@ -242,8 +242,8 @@ class GitGraphView {
 		// Configure current branches
 		if (this.currentBranches !== null && !(this.currentBranches.length === 1 && this.currentBranches[0] === SHOW_ALL_BRANCHES)) {
 			// Filter any branches that are currently selected, but no longer exist
-			const globPatterns = this.config.customBranchGlobPatterns.map((pattern) => pattern.glob);
-			this.currentBranches = this.currentBranches.filter((branch) =>
+			const globPatterns = this.config.customBranchGlobPatterns.map((pattern: GG.CustomBranchGlobPattern) => pattern.glob);
+			this.currentBranches = this.currentBranches.filter((branch: string) =>
 				this.gitBranches.includes(branch) || globPatterns.includes(branch)
 			);
 		}
@@ -254,8 +254,8 @@ class GitGraphView {
 			this.currentBranches = [];
 			if (onRepoLoadShowSpecificBranches.length > 0) {
 				// Show specific branches if they exist in the repository
-				const globPatterns = this.config.customBranchGlobPatterns.map((pattern) => pattern.glob);
-				this.currentBranches.push(...onRepoLoadShowSpecificBranches.filter((branch) =>
+				const globPatterns = this.config.customBranchGlobPatterns.map((pattern: GG.CustomBranchGlobPattern) => pattern.glob);
+				this.currentBranches.push(...onRepoLoadShowSpecificBranches.filter((branch: string) =>
 					this.gitBranches.includes(branch) || globPatterns.includes(branch)
 				));
 			}
@@ -275,7 +275,7 @@ class GitGraphView {
 
 		// Remove hidden remotes that no longer exist
 		let hiddenRemotes = this.gitRepos[this.currentRepo].hideRemotes;
-		let hideRemotes = hiddenRemotes.filter((hiddenRemote) => remotes.includes(hiddenRemote));
+		let hideRemotes = hiddenRemotes.filter((hiddenRemote: string) => remotes.includes(hiddenRemote));
 		if (hiddenRemotes.length !== hideRemotes.length) {
 			this.saveRepoStateValue(this.currentRepo, 'hideRemotes', hideRemotes);
 		}
@@ -305,11 +305,11 @@ class GitGraphView {
 		const tagsChanged = !arraysStrictlyEqual(this.gitTags, tags);
 		this.gitTags = tags;
 
-		if (!this.currentRepoLoading && !this.currentRepoRefreshState.hard && this.moreCommitsAvailable === moreAvailable && this.onlyFollowFirstParent === onlyFollowFirstParent && this.commitHead === commitHead && commits.length > 0 && arraysEqual(this.commits, commits, (a, b) =>
+		if (!this.currentRepoLoading && !this.currentRepoRefreshState.hard && this.moreCommitsAvailable === moreAvailable && this.onlyFollowFirstParent === onlyFollowFirstParent && this.commitHead === commitHead && commits.length > 0 && arraysEqual(this.commits, commits, (a: GG.GitCommit, b: GG.GitCommit) =>
 			a.hash === b.hash &&
 			arraysStrictlyEqual(a.heads, b.heads) &&
-			arraysEqual(a.tags, b.tags, (a, b) => a.name === b.name && a.annotated === b.annotated) &&
-			arraysEqual(a.remotes, b.remotes, (a, b) => a.name === b.name && a.remote === b.remote) &&
+			arraysEqual(a.tags, b.tags, (tagA: GG.GitCommitTag, tagB: GG.GitCommitTag) => tagA.name === tagB.name && tagA.annotated === tagB.annotated) &&
+			arraysEqual(a.remotes, b.remotes, (remoteA: GG.GitCommitRemote, remoteB: GG.GitCommitRemote) => remoteA.name === remoteB.name && remoteA.remote === remoteB.remote) &&
 			arraysStrictlyEqual(a.parents, b.parents) &&
 			((a.stash === null && b.stash === null) || (a.stash !== null && b.stash !== null && a.stash.selector === b.stash.selector))
 		) && this.renderedGitBranchHead === this.gitBranchHead) {
@@ -755,6 +755,7 @@ class GitGraphView {
 			codeReview: null,
 			lastViewedFile: null,
 			loading: true,
+			aiAnalysis: null, // Ensure aiAnalysis is initialized
 			scrollTop: {
 				summary: 0,
 				fileView: 0
@@ -1133,7 +1134,7 @@ class GitGraphView {
 					const isMerge = commit.parents.length > 1;
 					let inputs: DialogInput[] = [];
 					if (isMerge) {
-						let options = commit.parents.map((hash, index) => ({
+						let options = commit.parents.map((hash: string, index: number) => ({
 							name: abbrevCommit(hash) + (typeof this.commitLookup[hash] === 'number' ? ': ' + this.commits[this.commitLookup[hash]].message : ''),
 							value: (index + 1).toString()
 						}));
@@ -1174,7 +1175,7 @@ class GitGraphView {
 				visible: visibility.revert,
 				onClick: () => {
 					if (commit.parents.length > 1) {
-						let options = commit.parents.map((hash, index) => ({
+						let options = commit.parents.map((hash: string, index: number) => ({
 							name: abbrevCommit(hash) + (typeof this.commitLookup[hash] === 'number' ? ': ' + this.commits[this.commitLookup[hash]].message : ''),
 							value: (index + 1).toString()
 						}));
@@ -1560,7 +1561,7 @@ class GitGraphView {
 				mostRecentTagsIndex = i;
 			}
 		}
-		const mostRecentTags = mostRecentTagsIndex > -1 ? this.commits[mostRecentTagsIndex].tags.map((tag) => '"' + tag.name + '"') : [];
+		const mostRecentTags = mostRecentTagsIndex > -1 ? this.commits[mostRecentTagsIndex].tags.map((tag: GG.GitCommitTag) => '"' + tag.name + '"') : [];
 
 		const inputs: DialogInput[] = [
 			{ type: DialogInputType.TextRef, name: 'Name', default: initialName, info: mostRecentTags.length > 0 ? 'The most recent tag' + (mostRecentTags.length > 1 ? 's' : '') + ' in the loaded commits ' + (mostRecentTags.length > 1 ? 'are' : 'is') + ' ' + formatCommaSeparatedList(mostRecentTags) + '.' : undefined },
@@ -2549,7 +2550,7 @@ class GitGraphView {
 					});
 					const commitDetails = expandedCommit.commitDetails!;
 					const parents = commitDetails.parents.length > 0
-						? commitDetails.parents.map((parent) => {
+						? commitDetails.parents.map((parent: string) => {
 							const escapedParent = escapeHtml(parent);
 							return typeof this.commitLookup[parent] === 'number'
 								? '<span class="' + CLASS_INTERNAL_URL + '" data-type="commit" data-value="' + escapedParent + '" tabindex="-1">' + escapedParent + '</span>'
@@ -3585,7 +3586,7 @@ function generateFileTreeLeafHtml(name: string, leaf: FileTreeLeaf, gitFiles: Re
 		const fileTreeFile = gitFiles[leaf.index];
 		const textFile = fileTreeFile.additions !== null && fileTreeFile.deletions !== null;
 		const diffPossible = fileTreeFile.type === GG.GitFileStatus.Untracked || textFile;
-		const changeTypeMessage = GIT_FILE_CHANGE_TYPES[fileTreeFile.type] + (fileTreeFile.type === GG.GitFileStatus.Renamed ? ' (' + escapeHtml(fileTreeFile.oldFilePath) + ' → ' + escapeHtml(fileTreeFile.newFilePath) + ')' : '');
+		const changeTypeMessage = GIT_FILE_CHANGE_TYPES[fileTreeFile.type as keyof typeof GIT_FILE_CHANGE_TYPES] + (fileTreeFile.type === GG.GitFileStatus.Renamed ? ' (' + escapeHtml(fileTreeFile.oldFilePath) + ' → ' + escapeHtml(fileTreeFile.newFilePath) + ')' : '');
 		return '<li data-pathseg="' + encodedName + '"><span class="fileTreeFileRecord' + (leaf.index === fileContextMenuOpen ? ' ' + CLASS_CONTEXT_MENU_ACTIVE : '') + '" data-index="' + leaf.index + '"><span class="fileTreeFile' + (diffPossible ? ' gitDiffPossible' : '') + (leaf.reviewed ? '' : ' ' + CLASS_PENDING_REVIEW) + '" title="' + (diffPossible ? 'Click to View Diff' : 'Unable to View Diff' + (fileTreeFile.type !== GG.GitFileStatus.Deleted ? ' (this is a binary file)' : '')) + ' • ' + changeTypeMessage + '"><span class="fileTreeFileIcon">' + SVG_ICONS.file + '</span><span class="gitFileName ' + fileTreeFile.type + '">' + escapedName + '</span></span>' +
 			(initialState.config.enhancedAccessibility ? '<span class="fileTreeFileType" title="' + changeTypeMessage + '">' + fileTreeFile.type + '</span>' : '') +
 			(fileTreeFile.type !== GG.GitFileStatus.Added && fileTreeFile.type !== GG.GitFileStatus.Untracked && fileTreeFile.type !== GG.GitFileStatus.Deleted && textFile ? '<span class="fileTreeFileAddDel">(<span class="fileTreeFileAdd" title="' + fileTreeFile.additions + ' addition' + (fileTreeFile.additions !== 1 ? 's' : '') + '">+' + fileTreeFile.additions + '</span>|<span class="fileTreeFileDel" title="' + fileTreeFile.deletions + ' deletion' + (fileTreeFile.deletions !== 1 ? 's' : '') + '">-' + fileTreeFile.deletions + '</span>)</span>' : '') +
@@ -3947,7 +3948,7 @@ function findCommitElemWithId(elems: HTMLCollectionOf<HTMLElement>, id: number |
 }
 
 function generateSignatureHtml(signature: GG.GitSignature) {
-	return '<span class="signatureInfo ' + signature.status + '" title="' + GIT_SIGNATURE_STATUS_DESCRIPTIONS[signature.status] + ':'
+	return '<span class="signatureInfo ' + signature.status + '" title="' + GIT_SIGNATURE_STATUS_DESCRIPTIONS[signature.status as keyof typeof GIT_SIGNATURE_STATUS_DESCRIPTIONS] + ':'
 		+ ' Signed by ' + escapeHtml(signature.signer !== '' ? signature.signer : '<Unknown>')
 		+ ' (GPG Key Id: ' + escapeHtml(signature.key !== '' ? signature.key : '<Unknown>') + ')">'
 		+ (signature.status === GG.GitSignatureStatus.GoodAndValid

@@ -398,13 +398,41 @@ code{
 	width:6px;
 	cursor:col-resize;
 }
-#cdvSummary{
-	left:0;
-	width:50%;
-	padding:10px;
-	text-overflow:ellipsis;
-	-webkit-user-select:text;
-	user-select:text;
+#cdvSummary {
+	padding: 15px 20px;
+	overflow: auto;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	right: 50%;
+	line-height: 1.6; /* Improve readability */
+}
+#cdvSummaryTop.withAvatar {
+	padding-right: 60px;
+}
+#cdvSummaryTop .cdvSummaryKeyValues {
+	display: inline-block;
+	line-height: 1.8; /* Increase line spacing for key info */
+}
+#cdvSummaryTop .cdvSummaryKeyValues b {
+	font-weight: 600; /* Slightly bolder */
+	font-size: 1.05em; /* Slightly larger heading */
+	color: var(--vscode-editor-foreground);
+	margin-right: 5px;
+}
+#cdvSummaryTop .cdvSummaryAvatar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 50px;
+	height: 50px;
+	margin-left: 10px; /* Add space around avatar */
+}
+#cdvSummaryTop .cdvSummaryAvatar img {
+	width: 50px;
+	height: 50px;
+	border-radius: 4px;
 }
 
 .cdvSummaryTop{
@@ -456,12 +484,12 @@ code{
 	opacity:0.8;
 }
 
-#cdvFiles{
-	left:50%;
-	right:0;
-	padding:4px 8px 8px 0;
-	-webkit-user-select:none;
-	user-select:none;
+#cdvFiles {
+	padding: 15px 20px;
+	margin-top: 15px; /* Add space above file view */
+	overflow: auto;
+	position: absolute;
+	top: 0;
 }
 #cdvFiles ul{
 	list-style-type:none;
@@ -1020,4 +1048,26 @@ label > input[type=radio]:checked ~ .customRadio:after{
 #commitGraph, #commitTable th, #commitTable td, .gitRef, #loadingHeader, .unselectable, .roundedBtn, #controls label{
 	-webkit-user-select:none;
 	user-select:none;
+}
+
+#cdvAiAnalysis {
+    margin: 20px 20px 0 20px; /* Add margin top/bottom */
+    padding: 15px 0;
+    border-top: 1px solid var(--vscode-editorWidget-border);
+}
+
+#cdvAiAnalysis h4 {
+    margin: 0 0 8px 0; /* Increased bottom margin */
+    font-size: 1.1em; /* Make AI heading slightly larger */
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+#cdvAiAnalysis .aiSummary {
+    margin: 0;
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-editor-foreground);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    line-height: 1.6; /* Improve readability */
 }

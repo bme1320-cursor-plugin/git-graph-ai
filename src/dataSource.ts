@@ -10,6 +10,7 @@ import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionP
 import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, abbrevCommit, constructIncompatibleGitVersionMessage, doesVersionMeetRequirement, getPathFromStr, getPathFromUri, openGitTerminal, pathWithTrailingSlash, realpath, resolveSpawnOutput, showErrorMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
+import { analyzeDiff } from './aiService';
 
 const DRIVE_LETTER_PATH_REGEX = /^[a-z]:\//;
 const EOL_REGEX = /\r\n|\r|\n/g;
@@ -349,10 +350,47 @@ export class DataSource extends Disposable {
 		return Promise.all([
 			this.getCommitDetailsBase(repo, commitHash),
 			this.getDiffNameStatus(repo, fromCommit, commitHash),
-			this.getDiffNumStat(repo, fromCommit, commitHash)
-		]).then((results) => {
-			results[0].fileChanges = generateFileChanges(results[1], results[2], null);
-			return { commitDetails: results[0], error: null };
+			this.getDiffNumStat(repo, fromCommit, commitHash),
+		]).then(async (results) => {
+			const commitDetailsBase = results[0];
+			commitDetailsBase.fileChanges = generateFileChanges(results[1], results[2], null);
+
+			// Fetch AI analysis for each text file change
+			const aiAnalysisPromises = commitDetailsBase.fileChanges.map(async (fileChange) => {
+				// TODO: Determine if the file is text-based (maybe check extension or use a heuristic)
+				// For now, assume all are text files for the placeholder
+				const isTextFile = !['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp', '.ico'].some(ext => fileChange.newFilePath.toLowerCase().endsWith(ext)); // Simple check
+
+				if (isTextFile && fileChange.type !== GitFileStatus.Added && fileChange.type !== GitFileStatus.Deleted) {
+					try {
+						// Fetch file content before and after
+						const [contentBefore, contentAfter, diffContent] = await Promise.all([
+							this.getCommitFile(repo, fromCommit, fileChange.oldFilePath).catch(() => null), // Content before might fail if file was added
+							this.getCommitFile(repo, commitHash, fileChange.newFilePath).catch(() => null), // Content after might fail if file was deleted
+							this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath) // Fetch raw diff
+						]);
+
+						if (diffContent) {
+							return analyzeDiff(fileChange.newFilePath, diffContent, contentBefore, contentAfter, this.logger);
+						} else {
+							return null;
+						}
+					} catch (error) {
+						this.logger.logError(`Failed to get content/diff or analyze AI for ${fileChange.newFilePath}: ${error}`);
+						return null;
+					}
+				} else {
+					return null;
+				}
+			});
+
+			// Wait for all AI analyses and attach them (placeholder for now)
+			const aiResults = await Promise.all(aiAnalysisPromises);
+			// Placeholder: Just attach the first successful analysis to the main commit details for now.
+			// TODO: In a real scenario, you'd likely attach analysis per file change.
+			commitDetailsBase.aiAnalysis = aiResults.find(res => res !== null) || null;
+
+			return { commitDetails: commitDetailsBase, error: null };
 		}).catch((errorMessage) => {
 			return { commitDetails: null, error: errorMessage };
 		});
@@ -425,14 +463,48 @@ export class DataSource extends Disposable {
 			this.getDiffNameStatus(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
 			this.getDiffNumStat(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
 			toHash === UNCOMMITTED ? this.getStatus(repo) : Promise.resolve(null)
-		]).then((results) => {
+		]).then(async (results) => {
+			const fileChanges = generateFileChanges(results[0], results[1], results[2]);
+
+			// Placeholder: Fetch AI analysis for the first text file changed in the comparison
+			let overallAnalysis = null;
+			const firstTextFile = fileChanges.find(fc => !['.png', '.jpg', '.jpeg', '.gif'].some(ext => fc.newFilePath.toLowerCase().endsWith(ext)) && fc.type !== GitFileStatus.Added && fc.type !== GitFileStatus.Deleted);
+
+			if (firstTextFile) {
+				try {
+					const [contentBefore, contentAfter, diffContent] = await Promise.all([
+						this.getCommitFile(repo, fromHash, firstTextFile.oldFilePath).catch(() => null),
+						this.getCommitFile(repo, toHash === UNCOMMITTED ? 'HEAD' : toHash, firstTextFile.newFilePath).catch(() => null),
+						this.getDiffBetweenRevisions(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash, firstTextFile.newFilePath)
+					]);
+
+					if (diffContent) {
+						overallAnalysis = await analyzeDiff(firstTextFile.newFilePath, diffContent, contentBefore, contentAfter, this.logger);
+					}
+				} catch (error) {
+					this.logger.logError(`Failed to get content/diff or analyze AI for comparison ${fromHash}...${toHash}: ${error}`);
+				}
+			}
+
 			return {
-				fileChanges: generateFileChanges(results[0], results[1], results[2]),
+				fileChanges: fileChanges,
+				aiAnalysis: overallAnalysis, // Attach the overall (placeholder) analysis
 				error: null
 			};
 		}).catch((errorMessage) => {
 			return { fileChanges: [], error: errorMessage };
 		});
+	}
+
+	// Helper function to get raw diff (needed for AI service)
+	private async getDiffBetweenRevisions(repo: string, fromHash: string, toHash: string, filePath: string): Promise<string | null> {
+		try {
+			const args = ['diff', fromHash, toHash, '--', filePath];
+			return await this.spawnGit(args, repo, (stdout) => stdout.toString());
+		} catch (error) {
+			this.logger.logError(`Failed to get raw diff for ${filePath} between ${fromHash} and ${toHash}: ${error}`);
+			return null;
+		}
 	}
 
 	/**

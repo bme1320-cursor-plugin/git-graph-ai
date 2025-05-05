@@ -245,18 +245,23 @@ export class GitGraphView extends Disposable {
 				]);
 				this.sendMessage({
 					command: 'commitDetails',
-					...data[0],
+					commitDetails: data[0].commitDetails,
+					aiAnalysis: data[0].commitDetails?.aiAnalysis,
+					error: data[0].error,
 					avatar: data[1],
 					codeReview: msg.commitHash !== UNCOMMITTED ? this.extensionState.getCodeReview(msg.repo, msg.commitHash) : null,
 					refresh: msg.refresh
 				});
 				break;
 			case 'compareCommits':
+				const comparisonData = await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash);
 				this.sendMessage({
 					command: 'compareCommits',
 					commitHash: msg.commitHash,
 					compareWithHash: msg.compareWithHash,
-					...await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash),
+					fileChanges: comparisonData.fileChanges,
+					aiAnalysis: comparisonData.aiAnalysis,
+					error: comparisonData.error,
 					codeReview: msg.toHash !== UNCOMMITTED ? this.extensionState.getCodeReview(msg.repo, msg.fromHash + '-' + msg.toHash) : null,
 					refresh: msg.refresh
 				});
@@ -756,6 +761,7 @@ export class GitGraphView extends Disposable {
 				<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${standardiseCspSource(this.panel.webview.cspSource)} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:;">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<link rel="stylesheet" type="text/css" href="${this.getMediaUri('out.min.css')}">
+				<link rel="stylesheet" type="text/css" href="${this.getMediaUri('styles/ai.css')}">
 				<title>Git Graph</title>
 				<style>body{${colorVars}} ${colorParams}</style>
 			</head>
