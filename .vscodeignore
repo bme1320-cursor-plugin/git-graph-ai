@@ -7,6 +7,8 @@ node_modules/*/*.md
 node_modules/**
 # But DO include iconv-lite
 !node_modules/iconv-lite/**
+# ALSO include its dependency safer-buffer
+!node_modules/safer-buffer/**
 
 out/**/*.d.ts
 out/**/*.js.map
