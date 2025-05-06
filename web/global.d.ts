@@ -1,5 +1,13 @@
 import * as GG from '../out/types'; // Import types from back-end (requires `npm run compile-src`)
 
+// 扩展 GitRepoState 类型以包括新的属性
+type ExtendedGitRepoState = GG.GitRepoState & {
+	cdvDividers?: {
+		left: number,
+		right: number
+	};
+};
+
 declare global {
 
 	/* Visual Studio Code API Types */
@@ -42,7 +50,8 @@ declare global {
 		aiAnalysis: AIAnalysis | null;
 		scrollTop: {
 			summary: number,
-			fileView: number
+			fileView: number,
+			aiView: number
 		};
 		contextMenuOpen: {
 			summary: boolean,
@@ -53,7 +62,7 @@ declare global {
 	interface WebViewState {
 		readonly currentRepo: string;
 		readonly currentRepoLoading: boolean;
-		readonly gitRepos: GG.GitRepoSet;
+		readonly gitRepos: { [repo: string]: ExtendedGitRepoState }; // 使用扩展的 GitRepoState
 		readonly gitBranches: ReadonlyArray<string>;
 		readonly gitBranchHead: string | null;
 		readonly gitConfig: GG.GitRepoConfig | null;

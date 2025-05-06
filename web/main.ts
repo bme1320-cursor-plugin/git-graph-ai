@@ -758,7 +758,8 @@ class GitGraphView {
 			aiAnalysis: null, // Ensure aiAnalysis is initialized
 			scrollTop: {
 				summary: 0,
-				fileView: 0
+				fileView: 0,
+				aiView: 0
 			},
 			contextMenuOpen: {
 				summary: false,
@@ -2574,7 +2575,11 @@ class GitGraphView {
 				// Commit comparison should be shown
 				html += 'Displaying all changes from <b>' + commitOrder.from + '</b> to <b>' + (commitOrder.to !== UNCOMMITTED ? commitOrder.to : 'Uncommitted Changes') + '</b>.';
 			}
-			html += '</div><div id="cdvFiles">' + generateFileViewHtml(expandedCommit.fileTree!, expandedCommit.fileChanges!, expandedCommit.lastViewedFile, expandedCommit.contextMenuOpen.fileView, this.getFileViewType(), commitOrder.to === UNCOMMITTED) + '</div><div id="cdvDivider"></div>';
+			html += '</div>' +
+                '<div id="cdvFiles">' + generateFileViewHtml(expandedCommit.fileTree!, expandedCommit.fileChanges!, expandedCommit.lastViewedFile, expandedCommit.contextMenuOpen.fileView, this.getFileViewType(), commitOrder.to === UNCOMMITTED) + '</div>' +
+                '<div id="cdvAiSummary">' + this.generateAiAnalysisHtml(expandedCommit) + '</div>' +
+                '<div id="cdvDivider" class="left"></div>' +
+                '<div id="cdvDivider" class="right"></div>';
 		}
 		html += '</div><div id="cdvControls"><div id="cdvClose" class="cdvControlBtn" title="Close">' + SVG_ICONS.close + '</div>' +
 			(codeReviewPossible ? '<div id="cdvCodeReview" class="cdvControlBtn">' + SVG_ICONS.review + '</div>' : '') +
@@ -2643,6 +2648,12 @@ class GitGraphView {
 				}
 			}, () => this.saveState());
 
+			observeElemScroll('cdvAiSummary', expandedCommit.scrollTop.aiView || 0, (scrollTop) => {
+				if (this.expandedCommit === null) return;
+				if (!this.expandedCommit.scrollTop.aiView) this.expandedCommit.scrollTop.aiView = 0;
+				this.expandedCommit.scrollTop.aiView = scrollTop;
+			}, () => this.saveState());
+
 			document.getElementById('cdvFileViewTypeTree')!.addEventListener('click', () => {
 				this.changeFileViewType(GG.FileViewType.Tree);
 			});
@@ -2693,6 +2704,63 @@ class GitGraphView {
 		}
 	}
 
+	/**
+     * Generate HTML for AI analysis section
+     */
+	private generateAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
+		if (expandedCommit.compareWithHash === null) {
+			// Single commit view
+			return this.getSingleCommitAiAnalysisHtml(expandedCommit);
+		} else {
+			// Comparison view
+			return this.getComparisonAiAnalysisHtml(expandedCommit);
+		}
+	}
+
+	/**
+     * Generate AI analysis HTML for a single commit
+     */
+	private getSingleCommitAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
+		const commitDetails = expandedCommit.commitDetails;
+		if (!commitDetails) return '<h4>AI分析</h4><p class="aiSummary">无法分析此提交。</p>';
+
+		// 如果有真实的AI分析数据，使用它
+		if (expandedCommit.aiAnalysis) {
+			return '<h4>AI 分析摘要</h4>' +
+				'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>';
+		}
+
+		// 否则使用默认的占位符
+		return '<h4>AI 分析摘要</h4>' +
+            '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
+            '<p class="aiSummary">该提交包含了 ' + commitDetails.fileChanges.length + ' 个文件更改。</p>';
+	}
+
+	/**
+     * Generate AI analysis HTML for a comparison between commits
+     */
+	private getComparisonAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
+		const fileChanges = expandedCommit.fileChanges;
+		if (!fileChanges) return '<h4>AI分析</h4><p class="aiSummary">无法分析此比较。</p>';
+
+		// 如果有真实的AI分析数据，使用它
+		if (expandedCommit.aiAnalysis) {
+			return '<h4>AI 差异分析</h4>' +
+				'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>';
+		}
+
+		// 获取不同类型变更的数量
+		const additions = fileChanges.filter(f => f.type === GG.GitFileStatus.Added).length;
+		const modifications = fileChanges.filter(f => f.type === GG.GitFileStatus.Modified).length;
+		const deletions = fileChanges.filter(f => f.type === GG.GitFileStatus.Deleted).length;
+
+		// 否则使用默认的占位符
+		return '<h4>AI 差异分析</h4>' +
+            '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
+            '<p class="aiSummary">此次比较中有 ' + additions + ' 个新增文件，' +
+            modifications + ' 个修改文件，和 ' + deletions + ' 个删除文件。</p>';
+	}
+
 	private setCdvHeight(elem: HTMLElement, isDocked: boolean) {
 		let height = this.gitRepos[this.currentRepo].cdvHeight, windowHeight = window.innerHeight;
 		if (height > windowHeight - 40) {
@@ -2709,11 +2777,51 @@ class GitGraphView {
 	}
 
 	private setCdvDivider() {
-		let percent = (this.gitRepos[this.currentRepo].cdvDivider * 100).toFixed(2) + '%';
-		let summaryElem = document.getElementById('cdvSummary'), dividerElem = document.getElementById('cdvDivider'), filesElem = document.getElementById('cdvFiles');
-		if (summaryElem !== null) summaryElem.style.width = percent;
-		if (dividerElem !== null) dividerElem.style.left = percent;
-		if (filesElem !== null) filesElem.style.left = percent;
+		// 获取仓库设置的分隔线位置（现在应该存储两个位置）
+		let repo = this.gitRepos[this.currentRepo];
+		if (!repo.cdvDividers) {
+			// 如果是第一次使用新版本，初始化新的分隔线位置
+			repo.cdvDividers = {
+				left: repo.cdvDivider || 0.33, // 使用现有的值或默认值
+				right: 0.66
+			};
+			// 兼容旧版本，未来可以移除
+			delete repo.cdvDivider;
+			this.saveRepoState();
+		}
+
+		// 设置左侧分隔线和相关元素的样式
+		let leftPercent = (repo.cdvDividers.left * 100).toFixed(2) + '%';
+		let rightPercent = (repo.cdvDividers.right * 100).toFixed(2) + '%';
+
+		// 获取所有相关元素
+		let summaryElem = document.getElementById('cdvSummary'),
+			leftDividerElem = document.querySelector('#cdvDivider.left') as HTMLElement,
+			rightDividerElem = document.querySelector('#cdvDivider.right') as HTMLElement,
+			filesElem = document.getElementById('cdvFiles'),
+			aiSummaryElem = document.getElementById('cdvAiSummary');
+
+		// 设置元素位置和宽度
+		if (summaryElem !== null) {
+			summaryElem.style.width = leftPercent;
+		}
+
+		if (leftDividerElem !== null) {
+			leftDividerElem.style.left = leftPercent;
+		}
+
+		if (filesElem !== null) {
+			filesElem.style.left = leftPercent;
+			filesElem.style.width = (repo.cdvDividers.right - repo.cdvDividers.left) * 100 + '%';
+		}
+
+		if (rightDividerElem !== null) {
+			rightDividerElem.style.left = rightPercent;
+		}
+
+		if (aiSummaryElem !== null) {
+			aiSummaryElem.style.left = rightPercent;
+		}
 	}
 
 	private makeCdvResizable() {
@@ -2750,36 +2858,87 @@ class GitGraphView {
 	}
 
 	private makeCdvDividerDraggable() {
-		let minX = -1, width = -1;
+		let minX = -1, width = -1, activeDivider: 'left' | 'right' | null = null;
 
 		const processDraggingCdvDivider: EventListener = (e) => {
-			if (minX < 0) return;
+			if (minX < 0 || activeDivider === null) return;
 			let percent = ((<MouseEvent>e).clientX - minX) / width;
-			if (percent < 0.2) percent = 0.2;
-			else if (percent > 0.8) percent = 0.8;
 
-			if (this.gitRepos[this.currentRepo].cdvDivider !== percent) {
-				this.gitRepos[this.currentRepo].cdvDivider = percent;
-				this.setCdvDivider();
+			// 确保cdvDividers已初始化
+			const repo = this.gitRepos[this.currentRepo];
+			if (!repo.cdvDividers) {
+				repo.cdvDividers = {
+					left: repo.cdvDivider || 0.33,
+					right: 0.66
+				};
+				// 兼容旧版本，未来可以移除
+				delete repo.cdvDivider;
+				this.saveRepoState();
+			}
+
+			// 根据当前拖动的分隔线设置不同的限制
+			if (activeDivider === 'left') {
+				// 左侧分隔线不能太小或太靠右
+				if (percent < 0.2) percent = 0.2;
+				else if (percent > repo.cdvDividers.right - 0.1) {
+					percent = repo.cdvDividers.right - 0.1;
+				}
+
+				if (repo.cdvDividers.left !== percent) {
+					repo.cdvDividers.left = percent;
+					this.setCdvDivider();
+				}
+			} else if (activeDivider === 'right') {
+				// 右侧分隔线不能太靠左或太靠右
+				if (percent < repo.cdvDividers.left + 0.1) {
+					percent = repo.cdvDividers.left + 0.1;
+				} else if (percent > 0.8) percent = 0.8;
+
+				if (repo.cdvDividers.right !== percent) {
+					repo.cdvDividers.right = percent;
+					this.setCdvDivider();
+				}
 			}
 		};
+
 		const stopDraggingCdvDivider: EventListener = (e) => {
-			if (minX < 0) return;
+			if (minX < 0 || activeDivider === null) return;
 			processDraggingCdvDivider(e);
 			this.saveRepoState();
 			minX = -1;
+			activeDivider = null;
 			eventOverlay.remove();
 		};
 
-		document.getElementById('cdvDivider')!.addEventListener('mousedown', () => {
-			const contentElem = document.getElementById('cdvContent');
-			if (contentElem === null) return;
+		// 设置左侧分隔线的拖动事件
+		const leftDivider = document.querySelector('#cdvDivider.left');
+		if (leftDivider) {
+			leftDivider.addEventListener('mousedown', () => {
+				const contentElem = document.getElementById('cdvContent');
+				if (contentElem === null) return;
 
-			const bounds = contentElem.getBoundingClientRect();
-			minX = bounds.left;
-			width = bounds.width;
-			eventOverlay.create('colResize', processDraggingCdvDivider, stopDraggingCdvDivider);
-		});
+				const bounds = contentElem.getBoundingClientRect();
+				minX = bounds.left;
+				width = bounds.width;
+				activeDivider = 'left';
+				eventOverlay.create('colResize', processDraggingCdvDivider, stopDraggingCdvDivider);
+			});
+		}
+
+		// 设置右侧分隔线的拖动事件
+		const rightDivider = document.querySelector('#cdvDivider.right');
+		if (rightDivider) {
+			rightDivider.addEventListener('mousedown', () => {
+				const contentElem = document.getElementById('cdvContent');
+				if (contentElem === null) return;
+
+				const bounds = contentElem.getBoundingClientRect();
+				minX = bounds.left;
+				width = bounds.width;
+				activeDivider = 'right';
+				eventOverlay.create('colResize', processDraggingCdvDivider, stopDraggingCdvDivider);
+			});
+		}
 	}
 
 	/**

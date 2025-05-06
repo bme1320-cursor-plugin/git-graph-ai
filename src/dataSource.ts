@@ -10,7 +10,7 @@ import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionP
 import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, abbrevCommit, constructIncompatibleGitVersionMessage, doesVersionMeetRequirement, getPathFromStr, getPathFromUri, openGitTerminal, pathWithTrailingSlash, realpath, resolveSpawnOutput, showErrorMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
-import { analyzeDiff } from './aiService';
+import { analyzeDiff, analyzeDiffPlaceholder } from './aiService';
 
 const DRIVE_LETTER_PATH_REGEX = /^[a-z]:\//;
 const EOL_REGEX = /\r\n|\r|\n/g;
@@ -479,7 +479,7 @@ export class DataSource extends Disposable {
 					]);
 
 					if (diffContent) {
-						overallAnalysis = await analyzeDiff(firstTextFile.newFilePath, diffContent, contentBefore, contentAfter, this.logger);
+						overallAnalysis = await analyzeDiffPlaceholder(firstTextFile.newFilePath, diffContent, contentBefore, contentAfter, this.logger);
 					}
 				} catch (error) {
 					this.logger.logError(`Failed to get content/diff or analyze AI for comparison ${fromHash}...${toHash}: ${error}`);

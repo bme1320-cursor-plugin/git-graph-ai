@@ -201,7 +201,11 @@ interface PullRequestConfigCustom extends PullRequestConfigBase {
 export type PullRequestConfig = PullRequestConfigBuiltIn | PullRequestConfigCustom;
 
 export interface GitRepoState {
-	cdvDivider: number;
+	cdvDivider?: number;
+	cdvDividers?: {
+		left: number,
+		right: number
+	};
 	cdvHeight: number;
 	columnWidths: ColumnWidth[] | null;
 	commitOrdering: RepoCommitOrdering;
