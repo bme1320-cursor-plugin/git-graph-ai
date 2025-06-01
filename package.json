@@ -42,7 +42,7 @@
 	"contributes": {
 		"commands": [
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.view",
 				"title": "View Git Graph (git log)",
 				"icon": {
@@ -51,47 +51,47 @@
 				}
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.addGitRepository",
 				"title": "Add Git Repository..."
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.clearAvatarCache",
 				"title": "Clear Avatar Cache"
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.endAllWorkspaceCodeReviews",
 				"title": "End All Code Reviews in Workspace"
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.endSpecificWorkspaceCodeReview",
 				"title": "End a specific Code Review in Workspace..."
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.fetch",
 				"title": "Fetch from Remote(s)"
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.removeGitRepository",
 				"title": "Remove Git Repository..."
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.resumeWorkspaceCodeReview",
 				"title": "Resume a specific Code Review in Workspace..."
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.version",
 				"title": "Get Version Information"
 			},
 			{
-				"category": "Git Graph",
+				"category": "Git Graph AI",
 				"command": "git-graph.openFile",
 				"title": "Open File",
 				"icon": "$(go-to-file)",
