@@ -387,8 +387,10 @@ export class DataSource extends Disposable {
 			// Wait for all AI analyses and attach them (placeholder for now)
 			const aiResults = await Promise.all(aiAnalysisPromises);
 			// Placeholder: Just attach the first successful analysis to the main commit details for now.
-			// TODO: In a real scenario, you'd likely attach analysis per file change.
-			commitDetailsBase.aiAnalysis = aiResults.find(res => res !== null) || null;
+
+			// 将aiResults的 summary 的所有回答用 "\n" 连接起来，忽略 null 值
+			const overallAnalysis = aiResults.filter(res => res !== null).map(res => res?.summary).filter(summary => summary).join('<br>') || null;
+			commitDetailsBase.aiAnalysis = overallAnalysis ? { summary: overallAnalysis } : null;
 
 			return { commitDetails: commitDetailsBase, error: null };
 		}).catch((errorMessage) => {
