@@ -42,20 +42,18 @@ def analyze_diff():
         # content_after = data.get('content_after') # Optional, could be used for more context
 
         print(f"Received request to analyze diff for: {file_path}")
-
+        file_path: str = file_path.strip()
         # --- OpenAI API Call --- 
         try:
             prompt = f"""
             Analyze the following git diff for the file '{file_path}' and provide a concise, one-sentence summary of the main changes.
             Focus on the *what* and *why* if possible, not just the line numbers.
-            Example summary: "Refactored the data loading logic to improve performance."
             
             Diff:
             ```diff
             {file_diff}
             ```
-            
-            One-sentence summary:"""
+            不要用指代词，先用一句话说明这个文件是什么，然后中文表达你的一句话的总结。一个名词+一个动词 “{file_path.split('/')[-1]}: 自我介绍页面。修改了毕业时间。” 现在开始用中文你的回答："""
 
             chat_completion = openai_client.chat.completions.create(
                 messages=[
