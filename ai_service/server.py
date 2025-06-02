@@ -145,11 +145,21 @@ def handle_comprehensive_analysis(data):
         
         # --- OpenAI API Call for Comprehensive Analysis ---
         try:
+            # 根据分析类型调整系统提示词
+            if analysis_type == 'file_history_analysis':
+                system_content = "你是一个专业的代码分析师，擅长分析文件的版本演进历史。请提供结构化的JSON格式分析报告。"
+                max_tokens = 400
+                temperature = 0.1
+            else:
+                system_content = "你是一个专业的代码分析师，擅长分析Git提交和版本变更。请提供准确、简洁、有价值的分析报告。"
+                max_tokens = 500
+                temperature = 0.2
+
             chat_completion = openai_client.chat.completions.create(
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个专业的代码分析师，擅长分析Git提交和版本变更。请提供准确、简洁、有价值的分析报告。"
+                        "content": system_content
                     },
                     {
                         "role": "user",
@@ -157,13 +167,22 @@ def handle_comprehensive_analysis(data):
                     }
                 ],
                 model="gpt-4.1-mini",
-                max_tokens=500,  # 为综合分析提供更多token
-                temperature=0.2,  # 降低温度以获得更一致的分析
+                max_tokens=max_tokens,
+                temperature=temperature,
                 n=1
             )
 
             ai_summary = chat_completion.choices[0].message.content.strip()
-            print(f"OpenAI Comprehensive Analysis: {ai_summary}")
+            print(f"OpenAI Comprehensive Analysis ({analysis_type}): {ai_summary}")
+
+            # 对于文件历史分析，尝试确保返回有效的JSON格式
+            if analysis_type == 'file_history_analysis':
+                try:
+                    # 验证是否为有效JSON
+                    json.loads(ai_summary)
+                except json.JSONDecodeError:
+                    # 如果不是有效JSON，生成一个默认的结构化响应
+                    ai_summary = generate_fallback_file_history_analysis(ai_summary)
 
             return jsonify({
                 "analysis": {
@@ -173,7 +192,11 @@ def handle_comprehensive_analysis(data):
 
         except OpenAIError as e:
             print(f"OpenAI API error for comprehensive analysis: {e}")
-            error_summary = f"<p><strong>AI分析暂时不可用</strong></p><p>错误信息：{str(e)}</p>"
+            if analysis_type == 'file_history_analysis':
+                error_summary = generate_fallback_file_history_analysis(f"AI分析暂时不可用：{str(e)}")
+            else:
+                error_summary = f"<p><strong>AI分析暂时不可用</strong></p><p>错误信息：{str(e)}</p>"
+            
             return jsonify({
                 "analysis": {
                     "summary": error_summary,
@@ -181,7 +204,11 @@ def handle_comprehensive_analysis(data):
             })
         except Exception as e:
             print(f"Unexpected error during comprehensive analysis: {e}")
-            error_summary = "<p><strong>AI分析遇到未知错误</strong></p><p>请稍后重试。</p>"
+            if analysis_type == 'file_history_analysis':
+                error_summary = generate_fallback_file_history_analysis("AI分析遇到未知错误，请稍后重试。")
+            else:
+                error_summary = "<p><strong>AI分析遇到未知错误</strong></p><p>请稍后重试。</p>"
+            
             return jsonify({
                 "analysis": {
                     "summary": error_summary,
@@ -191,6 +218,147 @@ def handle_comprehensive_analysis(data):
     except Exception as e:
         print(f"Error processing comprehensive analysis: {e}")
         return jsonify({"error": "An internal server error occurred during comprehensive analysis"}), 500
+
+def generate_fallback_file_history_analysis(error_message):
+    """生成文件历史分析的降级响应"""
+    return json.dumps({
+        "summary": f"文件历史分析：{error_message}",
+        "evolutionPattern": "文件演进模式分析基于提交历史，显示开发活跃度和变更频率。",
+        "keyChanges": [
+            "主要的功能添加和重构",
+            "重要的bug修复和性能优化",
+            "接口变更和架构调整"
+        ],
+        "recommendations": [
+            "建议定期重构以保持代码质量",
+            "考虑添加更详细的提交信息",
+            "保持一致的代码风格和规范",
+            "适时进行性能优化和安全更新"
+        ]
+    }, ensure_ascii=False)
+
+@app.route('/analyze_file_history', methods=['POST'])
+def analyze_file_history():
+    """专门处理文件历史分析的端点"""
+    if not openai_client:
+        return jsonify({
+            "analysis": {
+                "summary": "AI分析服务暂时不可用，请检查OpenAI API配置。",
+            }
+        })
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Missing data in request"}), 400
+        
+        file_path = data.get('file_path', '未知文件')
+        prompt = data.get('file_diff', '')  # 文件历史分析的完整提示
+        
+        if not prompt:
+            return jsonify({"error": "Missing analysis prompt"}), 400
+        
+        print(f"Received file history analysis request for: {file_path}")
+        
+        # 优化后的文件历史分析提示词
+        enhanced_prompt = f"""
+请对以下文件的版本演进历史进行深度分析：
+
+{prompt}
+
+请严格按照以下JSON格式返回分析结果：
+
+{{
+    "summary": "文件演进总结（整体发展趋势、主要目的和演进方向）",
+    "evolutionPattern": "演进模式分析（开发活跃度、变更频率、贡献者协作模式）",
+    "keyChanges": [
+        "关键变更点1",
+        "关键变更点2",
+        "关键变更点3"
+    ],
+    "recommendations": [
+        "优化建议1",
+        "优化建议2", 
+        "优化建议3"
+    ]
+}}
+
+要求：
+- 必须严格返回JSON格式，不要包含其他文本
+- keyChanges和recommendations必须是字符串数组
+- 每个建议和变更点控制在30字以内
+- 使用中文回答，语言自然流畅
+- 重点关注文件的演进趋势和开发模式
+- 提供具体、可操作的建议
+"""
+
+        try:
+            chat_completion = openai_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的代码分析师，擅长分析文件的版本演进历史和开发模式。请提供深入且实用的分析报告。"
+                    },
+                    {
+                        "role": "user",
+                        "content": enhanced_prompt,
+                    }
+                ],
+                model="gpt-4.1-mini",
+                max_tokens=350,
+                temperature=0.3,
+                n=1
+            )
+
+            ai_summary = chat_completion.choices[0].message.content.strip()
+            print(f"File History Analysis for {file_path}: {ai_summary}")
+
+            return jsonify({
+                "analysis": {
+                    "summary": ai_summary,
+                }
+            })
+
+        except OpenAIError as e:
+            print(f"OpenAI API error for file history analysis: {e}")
+            fallback_analysis = f"""
+文件 {file_path} 的演进分析暂时不可用。
+
+根据提交历史，这个文件经历了多次修改和优化。建议：
+1. 定期审查代码质量，确保可维护性
+2. 保持提交信息的规范性和描述性
+3. 考虑重构复杂的代码段
+4. 建立代码审查流程以保证质量
+
+AI分析服务将在稍后恢复。错误信息：{str(e)}
+"""
+            return jsonify({
+                "analysis": {
+                    "summary": fallback_analysis,
+                }
+            })
+        except Exception as e:
+            print(f"Unexpected error during file history analysis: {e}")
+            fallback_analysis = f"""
+文件 {file_path} 的演进分析遇到技术问题。
+
+基于可用信息，建议：
+1. 持续关注文件的变更模式
+2. 优化代码结构和可读性  
+3. 建立良好的版本控制习惯
+4. 定期进行代码质量评估
+
+请稍后重试AI分析功能。
+"""
+            return jsonify({
+                "analysis": {
+                    "summary": fallback_analysis,
+                }
+            })
+
+    except Exception as e:
+        print(f"Error processing file history analysis: {e}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
@@ -254,6 +422,7 @@ if __name__ == '__main__':
     print("Starting AI Analysis Server...")
     print(f"Health check available at: http://127.0.0.1:5111/health")
     print(f"Analysis endpoint available at: http://127.0.0.1:5111/analyze_diff")
+    print(f"File history analysis endpoint available at: http://127.0.0.1:5111/analyze_file_history")
     print(f"Batch analysis endpoint available at: http://127.0.0.1:5111/analyze_batch")
     # Note: Use '0.0.0.0' to be accessible from the extension container
     # Use a specific port, e.g., 5111

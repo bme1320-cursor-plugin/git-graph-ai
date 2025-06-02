@@ -10,7 +10,7 @@ import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionP
 import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, abbrevCommit, constructIncompatibleGitVersionMessage, doesVersionMeetRequirement, getPathFromStr, getPathFromUri, openGitTerminal, pathWithTrailingSlash, realpath, resolveSpawnOutput, showErrorMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
-import { analyzeDiff } from './aiService';
+import { analyzeDiff, analyzeFileHistory } from './aiService';
 
 const DRIVE_LETTER_PATH_REGEX = /^[a-z]:\//;
 const EOL_REGEX = /\r\n|\r|\n/g;
@@ -2572,12 +2572,10 @@ ${index + 1}. 文件: ${fileData.filePath}
 			// 构建文件历史分析提示
 			const prompt = this.buildFileHistoryAnalysisPrompt(filePath, commits);
 
-			// 使用AI服务进行分析
-			const analysis = await analyzeDiff(
-				'file_history_analysis',
+			// 使用专门的文件历史分析服务
+			const analysis = await analyzeFileHistory(
+				filePath,
 				prompt,
-				null,
-				null,
 				logger
 			);
 
@@ -2654,19 +2652,86 @@ ${index + 1}. [${date}] ${commit.author}
 		try {
 			// 尝试解析JSON格式的分析结果
 			const parsed = JSON.parse(analysisText);
+
+			// 处理recommendations字段，可能是字符串或数组
+			let recommendations: string[];
+			if (typeof parsed.recommendations === 'string') {
+				// 如果是字符串，按句号分割成数组
+				recommendations = parsed.recommendations
+					.split(/[。！？；]/g)
+					.map((item: string) => item.trim())
+					.filter((item: string) => item.length > 0 && item !== '');
+			} else if (Array.isArray(parsed.recommendations)) {
+				recommendations = parsed.recommendations;
+			} else {
+				recommendations = ['建议分析中'];
+			}
+
+			// 处理keyChanges字段，可能是字符串或数组
+			let keyChanges: string[];
+			if (typeof parsed.keyChanges === 'string') {
+				keyChanges = parsed.keyChanges
+					.split(/[。！？；]/g)
+					.map((item: string) => item.trim())
+					.filter((item: string) => item.length > 0 && item !== '');
+			} else if (Array.isArray(parsed.keyChanges)) {
+				keyChanges = parsed.keyChanges;
+			} else {
+				keyChanges = ['关键变更分析中'];
+			}
+
 			return {
 				summary: parsed.summary || '文件历史分析完成',
 				evolutionPattern: parsed.evolutionPattern || '演进模式分析中',
-				keyChanges: Array.isArray(parsed.keyChanges) ? parsed.keyChanges : ['关键变更分析中'],
-				recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : ['建议分析中']
+				keyChanges: keyChanges,
+				recommendations: recommendations
 			};
 		} catch (error) {
-			// 如果不是JSON格式，则作为纯文本处理
+			// 如果不是JSON格式，尝试从自然语言文本中提取信息
+			this.logger.log(`[AI Analysis] Failed to parse JSON, extracting from text: ${analysisText.substring(0, 100)}...`);
+
+			// 使用AI返回的文本作为摘要，并生成基于文本的其他字段
+			const summary = analysisText.substring(0, 200);
+
+			// 尝试从文本中提取关键信息
+			const lines = analysisText.split('\n').filter(line => line.trim() !== '');
+			let evolutionPattern = '基于AI分析的演进模式';
+			let keyChanges: string[] = ['AI识别的重要变更'];
+			let recommendations: string[] = ['基于分析的优化建议'];
+
+			// 简单的关键词匹配来提取信息
+			const evolutionKeywords = ['演进', '发展', '变化', '趋势', '模式', '活跃', '频率'];
+			const changeKeywords = ['变更', '修改', '添加', '删除', '重构', '修复', '优化'];
+			const recommendationKeywords = ['建议', '推荐', '应该', '可以', '需要', '优化', '改进'];
+
+			for (const line of lines) {
+				if (evolutionKeywords.some(keyword => line.includes(keyword))) {
+					evolutionPattern = line.trim();
+					break;
+				}
+			}
+
+			// 提取变更相关的内容
+			const changeLines = lines.filter(line =>
+				changeKeywords.some(keyword => line.includes(keyword))
+			).slice(0, 3);
+			if (changeLines.length > 0) {
+				keyChanges = changeLines.map(line => line.trim());
+			}
+
+			// 提取建议相关的内容
+			const recommendationLines = lines.filter(line =>
+				recommendationKeywords.some(keyword => line.includes(keyword))
+			).slice(0, 3);
+			if (recommendationLines.length > 0) {
+				recommendations = recommendationLines.map(line => line.trim());
+			}
+
 			return {
-				summary: analysisText.substring(0, 200),
-				evolutionPattern: '基于提交历史的演进分析',
-				keyChanges: ['详细变更分析请查看提交历史'],
-				recommendations: ['建议定期重构和优化代码结构']
+				summary: summary,
+				evolutionPattern: evolutionPattern,
+				keyChanges: keyChanges,
+				recommendations: recommendations
 			};
 		}
 	}

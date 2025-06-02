@@ -242,3 +242,112 @@ export function checkAIServiceAvailability(logger?: Logger): Promise<boolean> {
 		req.end();
 	});
 }
+
+/**
+ * Analyze file history using the dedicated endpoint
+ * @param filePath The path of the file
+ * @param prompt The analysis prompt
+ * @param logger Optional logger instance
+ * @returns A Promise resolving to the AIAnalysis object or null if analysis fails
+ */
+export function analyzeFileHistory(
+	filePath: string,
+	prompt: string,
+	logger?: Logger
+): Promise<AIAnalysis | null> {
+	return new Promise(async (resolve) => {
+		// 检查输入有效性
+		if (!prompt || prompt.trim() === '') {
+			logger?.log(`[AI Service] Skipping empty prompt for file history: ${filePath}`);
+			resolve(null);
+			return;
+		}
+
+		// 尝试从缓存获取结果
+		if (cacheManager) {
+			const cacheKey = cacheManager.generateCacheKey(prompt, `file_history:${filePath}`);
+			const cachedResult = await cacheManager.get(cacheKey);
+			if (cachedResult) {
+				logger?.log(`[AI Service] Cache hit for file history: ${filePath}`);
+				resolve(cachedResult);
+				return;
+			}
+		}
+
+		const postData = JSON.stringify({
+			file_path: filePath,
+			file_diff: prompt // 复用这个字段传递完整的提示词
+		});
+
+		const options: http.RequestOptions = {
+			hostname: AI_SERVICE_HOST,
+			port: AI_SERVICE_PORT,
+			path: '/analyze_file_history', // 使用专门的文件历史分析端点
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Content-Length': Buffer.byteLength(postData)
+			},
+			timeout: 15000 // 文件历史分析可能需要更长时间
+		};
+
+		logger?.log(`[AI Service] Sending file history analysis request for: ${filePath}`);
+
+		const req = http.request(options, (res) => {
+			let responseBody = '';
+			res.setEncoding('utf8');
+
+			res.on('data', (chunk) => {
+				responseBody += chunk;
+			});
+
+			res.on('end', async () => {
+				if (res.statusCode === 200) {
+					try {
+						const parsedData = JSON.parse(responseBody);
+						if (parsedData && parsedData.analysis && parsedData.analysis.summary) {
+							const analysis = parsedData.analysis as AIAnalysis;
+							logger?.log(`[AI Service] Received file history analysis for: ${filePath}`);
+
+							// 缓存结果
+							if (cacheManager) {
+								const cacheKey = cacheManager.generateCacheKey(prompt, `file_history:${filePath}`);
+								await cacheManager.set(cacheKey, analysis);
+								logger?.log(`[AI Service] Cached file history result for: ${filePath}`);
+							}
+
+							resolve(analysis);
+						} else {
+							logger?.logError(`[AI Service] Invalid response format from file history service for ${filePath}: ${responseBody}`);
+							resolve(null);
+						}
+					} catch (e: any) {
+						logger?.logError(`[AI Service] Error parsing JSON response for file history ${filePath}: ${e} - Response: ${responseBody}`);
+						resolve(null);
+					}
+				} else {
+					logger?.logError(`[AI Service] File history request failed for ${filePath} - Status Code: ${res.statusCode} - Response: ${responseBody}`);
+					resolve(null);
+				}
+			});
+		});
+
+		req.on('error', (e: Error) => {
+			logger?.logError(`[AI Service] File history request error for ${filePath}: ${e.message}`);
+			if (e.message.includes('ECONNREFUSED')) {
+				logger?.logError('[AI Service] Connection refused. Is the Python AI server running on port 5111?');
+			}
+			resolve(null);
+		});
+
+		req.on('timeout', () => {
+			logger?.logError(`[AI Service] File history request timed out for ${filePath}.`);
+			req.destroy(new Error('Request timed out'));
+			resolve(null);
+		});
+
+		// Write data to request body
+		req.write(postData);
+		req.end();
+	});
+}
