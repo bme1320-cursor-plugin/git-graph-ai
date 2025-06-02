@@ -8,7 +8,6 @@ from openai import OpenAI, OpenAIError
 app = Flask(__name__)
 
 
-
 # --- OpenAI Client Initialization ---
 openai_client = None
 api_key = os.environ.get("OPENAI_API_KEY")
@@ -104,7 +103,7 @@ def analyze_diff():
                         "content": prompt,
                     }
                 ],
-                model="gpt-3.5-turbo",
+                model="gpt-4.1-mini",
                 max_tokens=100,  # 增加token限制以获得更详细的分析
                 temperature=0.3,
                 n=1
@@ -157,8 +156,8 @@ def handle_comprehensive_analysis(data):
                         "content": prompt,
                     }
                 ],
-                model="gpt-3.5-turbo",
-                max_tokens=300,  # 为综合分析提供更多token
+                model="gpt-4.1-mini",
+                max_tokens=500,  # 为综合分析提供更多token
                 temperature=0.2,  # 降低温度以获得更一致的分析
                 n=1
             )

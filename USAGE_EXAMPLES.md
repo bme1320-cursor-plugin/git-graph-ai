@@ -41,7 +41,7 @@ web/main.ts: 前端主文件，更新了UI显示逻辑。
 ```json
 {
   "git-graph.aiAnalysis.enabled": true,
-  "git-graph.aiAnalysis.maxFilesPerAnalysis": 10,
+  "git-graph.aiAnalysis.maxFilesPerAnalysis": 50,
   "git-graph.aiAnalysis.supportedFileExtensions": [
     ".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".md"
   ],
@@ -49,7 +49,7 @@ web/main.ts: 前端主文件，更新了UI显示逻辑。
     ".min.js", ".bundle.js", ".map", ".lock"
   ],
   "git-graph.aiAnalysis.timeout": 15,
-  "git-graph.aiAnalysis.batchSize": 5
+  "git-graph.aiAnalysis.batchSize": 10
 }
 ```
 

@@ -1,5 +1,6 @@
 import * as http from 'http';
-import { Logger } from './logger'; // Assuming Logger exists and can be used
+import { Logger } from './logger';
+import { AiCacheManager } from './aiCache';
 
 // Define the structure for the AI analysis result
 export interface AIAnalysis {
@@ -10,6 +11,51 @@ export interface AIAnalysis {
 const AI_SERVICE_HOST = '127.0.0.1'; // Use 127.0.0.1 instead of localhost for clarity
 const AI_SERVICE_PORT = 5111;
 const AI_SERVICE_PATH = '/analyze_diff';
+
+// 全局缓存管理器实例
+let cacheManager: AiCacheManager | null = null;
+
+/**
+ * 初始化AI缓存管理器
+ * @param cacheDir 缓存目录
+ * @param config 缓存配置
+ * @param logger 日志记录器
+ */
+export function initializeAICache(cacheDir: string, config: any, logger?: Logger): void {
+	if (config.enabled) {
+		cacheManager = new AiCacheManager(cacheDir, {
+			maxMemoryItems: config.maxMemoryItems,
+			maxDiskItems: config.maxDiskItems,
+			ttlHours: config.ttlHours,
+			enabled: config.enabled
+		}, logger);
+		logger?.log('[AI Service] Cache manager initialized');
+	} else {
+		cacheManager = null;
+		logger?.log('[AI Service] Cache disabled');
+	}
+}
+
+/**
+ * 获取缓存统计信息
+ */
+export function getCacheStats(): any {
+	return cacheManager?.getStats() || {
+		memoryItems: 0,
+		diskItems: 0,
+		totalSize: '0 Bytes',
+		hitRate: 'N/A'
+	};
+}
+
+/**
+ * 清除所有缓存
+ */
+export async function clearCache(): Promise<void> {
+	if (cacheManager) {
+		await cacheManager.clear();
+	}
+}
 
 /**
  * Calls the Python AI service to analyze a file diff.
@@ -27,12 +73,23 @@ export function analyzeDiff(
 	contentAfter: string | null,
 	logger?: Logger
 ): Promise<AIAnalysis | null> {
-	return new Promise((resolve) => {
+	return new Promise(async (resolve) => {
 		// 检查输入有效性
 		if (!fileDiff || fileDiff.trim() === '') {
 			logger?.log(`[AI Service] Skipping empty diff for: ${filePath}`);
 			resolve(null);
 			return;
+		}
+
+		// 尝试从缓存获取结果
+		if (cacheManager) {
+			const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
+			const cachedResult = await cacheManager.get(cacheKey);
+			if (cachedResult) {
+				logger?.log(`[AI Service] Cache hit for: ${filePath}`);
+				resolve(cachedResult);
+				return;
+			}
 		}
 
 		const postData = JSON.stringify({
@@ -64,13 +121,22 @@ export function analyzeDiff(
 				responseBody += chunk;
 			});
 
-			res.on('end', () => {
+			res.on('end', async () => {
 				if (res.statusCode === 200) {
 					try {
 						const parsedData = JSON.parse(responseBody);
 						if (parsedData && parsedData.analysis && parsedData.analysis.summary) {
+							const analysis = parsedData.analysis as AIAnalysis;
 							logger?.log(`[AI Service] Received analysis for: ${filePath}`);
-							resolve(parsedData.analysis as AIAnalysis);
+
+							// 缓存结果
+							if (cacheManager) {
+								const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
+								await cacheManager.set(cacheKey, analysis);
+								logger?.log(`[AI Service] Cached result for: ${filePath}`);
+							}
+
+							resolve(analysis);
 						} else {
 							logger?.logError(`[AI Service] Invalid response format from AI service for ${filePath}: ${responseBody}`);
 							resolve(null);

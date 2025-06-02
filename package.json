@@ -62,6 +62,16 @@
 			},
 			{
 				"category": "Git Graph AI",
+				"command": "git-graph.clearAICache",
+				"title": "Clear AI Analysis Cache"
+			},
+			{
+				"category": "Git Graph AI",
+				"command": "git-graph.showAICacheStats",
+				"title": "Show AI Cache Statistics"
+			},
+			{
+				"category": "Git Graph AI",
 				"command": "git-graph.endAllWorkspaceCodeReviews",
 				"title": "End All Code Reviews in Workspace"
 			},
@@ -1126,9 +1136,9 @@
 				},
 				"git-graph.aiAnalysis.maxFilesPerAnalysis": {
 					"type": "number",
-					"default": 10,
+					"default": 50,
 					"minimum": 1,
-					"maximum": 50,
+					"maximum": 100,
 					"description": "Maximum number of files to analyze with AI in a single commit or comparison."
 				},
 				"git-graph.aiAnalysis.supportedFileExtensions": {
@@ -1165,10 +1175,36 @@
 				},
 				"git-graph.aiAnalysis.batchSize": {
 					"type": "number",
-					"default": 3,
+					"default": 10,
 					"minimum": 1,
-					"maximum": 10,
+					"maximum": 20,
 					"description": "Number of files to analyze concurrently in a batch."
+				},
+				"git-graph.aiAnalysis.cache.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable caching of AI analysis results to improve performance and reduce API calls."
+				},
+				"git-graph.aiAnalysis.cache.maxMemoryItems": {
+					"type": "number",
+					"default": 100,
+					"minimum": 10,
+					"maximum": 1000,
+					"description": "Maximum number of AI analysis results to keep in memory cache."
+				},
+				"git-graph.aiAnalysis.cache.maxDiskItems": {
+					"type": "number",
+					"default": 500,
+					"minimum": 50,
+					"maximum": 5000,
+					"description": "Maximum number of AI analysis results to keep in persistent disk cache."
+				},
+				"git-graph.aiAnalysis.cache.ttlHours": {
+					"type": "number",
+					"default": 168,
+					"minimum": 1,
+					"maximum": 8760,
+					"description": "Time-to-live for cached AI analysis results in hours (default: 168 hours = 7 days)."
 				},
 				"git-graph.repositoryDropdownOrder": {
 					"type": "string",

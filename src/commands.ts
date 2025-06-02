@@ -11,6 +11,7 @@ import { RepoManager } from './repoManager';
 import { GitExecutable, UNABLE_TO_FIND_GIT_MSG, VsCodeVersionRequirement, abbrevCommit, abbrevText, copyToClipboard, doesVersionMeetRequirement, getExtensionVersion, getPathFromUri, getRelativeTimeDiff, getRepoName, getSortedRepositoryPaths, isPathInWorkspace, openFile, resolveToSymbolicPath, showErrorMessage, showInformationMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
+import { clearCache, getCacheStats } from './aiService';
 
 /**
  * Manages the registration and execution of Git Graph Commands.
@@ -50,6 +51,8 @@ export class CommandManager extends Disposable {
 		this.registerCommand('git-graph.addGitRepository', () => this.addGitRepository());
 		this.registerCommand('git-graph.removeGitRepository', () => this.removeGitRepository());
 		this.registerCommand('git-graph.clearAvatarCache', () => this.clearAvatarCache());
+		this.registerCommand('git-graph.clearAICache', () => this.clearAICache());
+		this.registerCommand('git-graph.showAICacheStats', () => this.showAICacheStats());
 		this.registerCommand('git-graph.fetch', () => this.fetch());
 		this.registerCommand('git-graph.endAllWorkspaceCodeReviews', () => this.endAllWorkspaceCodeReviews());
 		this.registerCommand('git-graph.endSpecificWorkspaceCodeReview', () => this.endSpecificWorkspaceCodeReview());
@@ -192,6 +195,42 @@ export class CommandManager extends Disposable {
 		}, () => {
 			showErrorMessage('An unexpected error occurred while running the command "Clear Avatar Cache".');
 		});
+	}
+
+	/**
+	 * The method run when the `git-graph.clearAICache` command is invoked.
+	 */
+	private async clearAICache() {
+		try {
+			await clearCache();
+			showInformationMessage('The AI Analysis Cache was successfully cleared.');
+			this.logger.log('AI Analysis Cache cleared by user command');
+		} catch (error) {
+			const errorMsg = 'An error occurred while clearing the AI Analysis Cache: ' + (error instanceof Error ? error.message : String(error));
+			showErrorMessage(errorMsg);
+			this.logger.logError(errorMsg);
+		}
+	}
+
+	/**
+	 * The method run when the `git-graph.showAICacheStats` command is invoked.
+	 */
+	private showAICacheStats() {
+		try {
+			const stats = getCacheStats();
+			const message = `AI Analysis Cache Statistics:
+• Memory Cache: ${stats.memoryItems} items
+• Disk Cache: ${stats.diskItems} items  
+• Total Size: ${stats.totalSize}
+• Hit Rate: ${stats.hitRate}`;
+
+			vscode.window.showInformationMessage(message, { modal: true });
+			this.logger.log('AI Cache stats displayed to user');
+		} catch (error) {
+			const errorMsg = 'An error occurred while retrieving AI Cache statistics: ' + (error instanceof Error ? error.message : String(error));
+			showErrorMessage(errorMsg);
+			this.logger.logError(errorMsg);
+		}
 	}
 
 	/**

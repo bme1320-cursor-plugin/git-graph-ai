@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { AvatarManager } from './avatarManager';
 import { CommandManager } from './commands';
 import { getConfig } from './config';
@@ -11,6 +12,7 @@ import { RepoManager } from './repoManager';
 import { StatusBarItem } from './statusBarItem';
 import { GitExecutable, UNABLE_TO_FIND_GIT_MSG, findGit, getGitExecutableFromPaths, showErrorMessage, showInformationMessage } from './utils';
 import { EventEmitter } from './utils/event';
+import { initializeAICache } from './aiService';
 
 /**
  * Activate Git Graph.
@@ -39,6 +41,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	const configurationEmitter = new EventEmitter<vscode.ConfigurationChangeEvent>();
 	const onDidChangeConfiguration = configurationEmitter.subscribe;
 
+	// 初始化AI缓存
+	const config = getConfig();
+	const cacheDir = path.join(context.globalStoragePath, 'ai-cache');
+	initializeAICache(cacheDir, config.aiAnalysis.cache, logger);
+
 	const dataSource = new DataSource(gitExecutable, onDidChangeConfiguration, onDidChangeGitExecutable, logger);
 	const avatarManager = new AvatarManager(dataSource, extensionState, logger);
 	const repoManager = new RepoManager(dataSource, extensionState, onDidChangeConfiguration, logger);
@@ -51,6 +58,12 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.workspace.onDidChangeConfiguration((event) => {
 			if (event.affectsConfiguration('git-graph')) {
 				configurationEmitter.emit(event);
+
+				// 重新初始化AI缓存（如果配置发生变化）
+				if (event.affectsConfiguration('git-graph.aiAnalysis.cache')) {
+					const newConfig = getConfig();
+					initializeAICache(cacheDir, newConfig.aiAnalysis.cache, logger);
+				}
 			} else if (event.affectsConfiguration('git.path')) {
 				const paths = getConfig().gitPaths;
 				if (paths.length === 0) return;

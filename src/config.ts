@@ -613,7 +613,7 @@ class Config {
 		const config = vscode.workspace.getConfiguration('git-graph');
 		return {
 			enabled: config.get('aiAnalysis.enabled', true),
-			maxFilesPerAnalysis: config.get('aiAnalysis.maxFilesPerAnalysis', 10),
+			maxFilesPerAnalysis: config.get('aiAnalysis.maxFilesPerAnalysis', 50),
 			supportedFileExtensions: config.get('aiAnalysis.supportedFileExtensions', [
 				'.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.h', '.hpp',
 				'.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt', '.scala', '.clj',
@@ -626,7 +626,13 @@ class Config {
 				'.bin', '.obj', '.class', '.jar', '.war', '.ear', '.aar'
 			]),
 			timeout: config.get('aiAnalysis.timeout', 10000),
-			batchSize: config.get('aiAnalysis.batchSize', 3)
+			batchSize: config.get('aiAnalysis.batchSize', 10),
+			cache: {
+				enabled: config.get('aiAnalysis.cache.enabled', true),
+				maxMemoryItems: config.get('aiAnalysis.cache.maxMemoryItems', 100),
+				maxDiskItems: config.get('aiAnalysis.cache.maxDiskItems', 500),
+				ttlHours: config.get('aiAnalysis.cache.ttlHours', 24 * 7) // 7天
+			}
 		};
 	}
 }

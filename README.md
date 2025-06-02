@@ -294,7 +294,7 @@ export https_proxy="http://127.0.0.1:7890"
 ```json
 {
   "git-graph.aiAnalysis.enabled": true,
-  "git-graph.aiAnalysis.maxFilesPerAnalysis": 10,
+  "git-graph.aiAnalysis.maxFilesPerAnalysis": 50,
   "git-graph.aiAnalysis.supportedFileExtensions": [
     ".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".c", ".cpp",
     ".cs", ".php", ".rb", ".go", ".rs", ".swift", ".kt",
@@ -304,7 +304,7 @@ export https_proxy="http://127.0.0.1:7890"
     ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".exe", ".dll"
   ],
   "git-graph.aiAnalysis.timeout": 10000,
-  "git-graph.aiAnalysis.batchSize": 3
+  "git-graph.aiAnalysis.batchSize": 10
 }
 ```
 
