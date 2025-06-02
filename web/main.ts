@@ -912,7 +912,7 @@ class GitGraphView {
 				} else {
 					// Commit Comparison is open
 					if (!expandedCommit.loading && expandedCommit.fileChanges !== null && expandedCommit.fileTree !== null) {
-						this.showCommitComparison(expandedCommit.commitHash, expandedCommit.compareWithHash, expandedCommit.fileChanges, expandedCommit.fileTree, expandedCommit.codeReview, expandedCommit.lastViewedFile, true);
+						this.showCommitComparison(expandedCommit.commitHash, expandedCommit.compareWithHash, expandedCommit.fileChanges, expandedCommit.fileTree, expandedCommit.codeReview, expandedCommit.lastViewedFile, true, expandedCommit.aiAnalysis);
 						if (expandedCommit.commitHash === UNCOMMITTED || expandedCommit.compareWithHash === UNCOMMITTED) {
 							this.requestCommitComparison(expandedCommit.commitHash, expandedCommit.compareWithHash, true);
 						}
@@ -2491,7 +2491,7 @@ class GitGraphView {
 		}
 	}
 
-	public showCommitComparison(commitHash: string, compareWithHash: string, fileChanges: ReadonlyArray<GG.GitFileChange>, fileTree: FileTreeFolder, codeReview: GG.CodeReview | null, lastViewedFile: string | null, refresh: boolean) {
+	public showCommitComparison(commitHash: string, compareWithHash: string, fileChanges: ReadonlyArray<GG.GitFileChange>, fileTree: FileTreeFolder, codeReview: GG.CodeReview | null, lastViewedFile: string | null, refresh: boolean, aiAnalysis?: AIAnalysis | null) {
 		const expandedCommit = this.expandedCommit;
 		if (expandedCommit === null || expandedCommit.commitElem === null || expandedCommit.compareWithElem === null || expandedCommit.commitHash !== commitHash || expandedCommit.compareWithHash !== compareWithHash) return;
 
@@ -2503,6 +2503,10 @@ class GitGraphView {
 		expandedCommit.codeReview = codeReview;
 		if (!refresh) {
 			expandedCommit.lastViewedFile = lastViewedFile;
+		}
+		// Store AI analysis for comparison
+		if (aiAnalysis !== undefined) {
+			expandedCommit.aiAnalysis = aiAnalysis;
 		}
 		expandedCommit.commitElem.classList.add(CLASS_COMMIT_DETAILS_OPEN);
 		expandedCommit.compareWithElem.classList.add(CLASS_COMMIT_DETAILS_OPEN);
@@ -2727,15 +2731,25 @@ class GitGraphView {
 		if (!commitDetails) return '<h4>AI分析</h4><p class="aiSummary">无法分析此提交。</p>';
 
 		// 如果有真实的AI分析数据，使用它
-		if (expandedCommit.aiAnalysis) {
-			return '<h4>AI 分析摘要</h4>' +
-				'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>';
+		if (expandedCommit.aiAnalysis && expandedCommit.aiAnalysis.summary) {
+			// 检查是否是新的结构化格式
+			if (expandedCommit.aiAnalysis.summary.includes('<div class="ai-commit-summary">')) {
+				return '<h4>AI 智能分析</h4>' + expandedCommit.aiAnalysis.summary;
+			} else {
+				// 兼容旧格式
+				return '<h4>AI 分析摘要</h4>' +
+					'<div class="ai-analysis-content">' +
+					'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>' +
+					'</div>';
+			}
 		}
 
 		// 否则使用默认的占位符
 		return '<h4>AI 分析摘要</h4>' +
+            '<div class="ai-analysis-content">' +
             '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
-            '<p class="aiSummary">该提交包含了 ' + commitDetails.fileChanges.length + ' 个文件更改。</p>';
+            '<p class="aiSummary">该提交包含了 ' + commitDetails.fileChanges.length + ' 个文件更改。</p>' +
+            '</div>';
 	}
 
 	/**
@@ -2746,21 +2760,33 @@ class GitGraphView {
 		if (!fileChanges) return '<h4>AI分析</h4><p class="aiSummary">无法分析此比较。</p>';
 
 		// 如果有真实的AI分析数据，使用它
-		if (expandedCommit.aiAnalysis) {
-			return '<h4>AI 差异分析</h4>' +
-				'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>';
+		if (expandedCommit.aiAnalysis && expandedCommit.aiAnalysis.summary) {
+			// 检查是否是新的结构化格式
+			if (expandedCommit.aiAnalysis.summary.includes('<div class="ai-comparison-summary">')) {
+				return '<h4>AI 智能对比分析</h4>' + expandedCommit.aiAnalysis.summary;
+			} else {
+				// 兼容旧格式
+				return '<h4>AI 差异分析</h4>' +
+					'<div class="ai-analysis-content">' +
+					'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>' +
+					'</div>';
+			}
 		}
 
 		// 获取不同类型变更的数量
 		const additions = fileChanges.filter(f => f.type === GG.GitFileStatus.Added).length;
 		const modifications = fileChanges.filter(f => f.type === GG.GitFileStatus.Modified).length;
 		const deletions = fileChanges.filter(f => f.type === GG.GitFileStatus.Deleted).length;
+		const renames = fileChanges.filter(f => f.type === GG.GitFileStatus.Renamed).length;
 
 		// 否则使用默认的占位符
 		return '<h4>AI 差异分析</h4>' +
+            '<div class="ai-analysis-content">' +
             '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
             '<p class="aiSummary">此次比较中有 ' + additions + ' 个新增文件，' +
-            modifications + ' 个修改文件，和 ' + deletions + ' 个删除文件。</p>';
+            modifications + ' 个修改文件，' + deletions + ' 个删除文件' +
+            (renames > 0 ? '，' + renames + ' 个重命名文件' : '') + '。</p>' +
+            '</div>';
 	}
 
 	private setCdvHeight(elem: HTMLElement, isDocked: boolean) {
@@ -3393,7 +3419,7 @@ window.addEventListener('load', () => {
 				break;
 			case 'compareCommits':
 				if (msg.error === null) {
-					gitGraph.showCommitComparison(msg.commitHash, msg.compareWithHash, msg.fileChanges, gitGraph.createFileTree(msg.fileChanges, msg.codeReview), msg.codeReview, msg.codeReview !== null ? msg.codeReview.lastViewedFile : null, msg.refresh);
+					gitGraph.showCommitComparison(msg.commitHash, msg.compareWithHash, msg.fileChanges, gitGraph.createFileTree(msg.fileChanges, msg.codeReview), msg.codeReview, msg.codeReview !== null ? msg.codeReview.lastViewedFile : null, msg.refresh, msg.aiAnalysis);
 				} else {
 					gitGraph.closeCommitComparison(true);
 					dialog.showError('Unable to load Commit Comparison', msg.error, null, null);

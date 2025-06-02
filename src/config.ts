@@ -604,6 +604,31 @@ class Config {
 		if (typeof oldValues !== 'undefined' && typeof oldValues.globalValue !== 'undefined') return oldValues.globalValue;
 		return defaultValue;
 	}
+
+	/**
+	 * Get the AI Analysis configuration.
+	 * @returns The AI Analysis configuration.
+	 */
+	get aiAnalysis() {
+		const config = vscode.workspace.getConfiguration('git-graph');
+		return {
+			enabled: config.get('aiAnalysis.enabled', true),
+			maxFilesPerAnalysis: config.get('aiAnalysis.maxFilesPerAnalysis', 10),
+			supportedFileExtensions: config.get('aiAnalysis.supportedFileExtensions', [
+				'.js', '.ts', '.jsx', '.tsx', '.py', '.java', '.c', '.cpp', '.h', '.hpp',
+				'.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt', '.scala', '.clj',
+				'.html', '.css', '.scss', '.less', '.vue', '.svelte', '.md', '.txt',
+				'.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf'
+			]),
+			excludedFileExtensions: config.get('aiAnalysis.excludedFileExtensions', [
+				'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp', '.ico',
+				'.pdf', '.zip', '.tar', '.gz', '.exe', '.dll', '.so', '.dylib',
+				'.bin', '.obj', '.class', '.jar', '.war', '.ear', '.aar'
+			]),
+			timeout: config.get('aiAnalysis.timeout', 10000),
+			batchSize: config.get('aiAnalysis.batchSize', 3)
+		};
+	}
 }
 
 /**

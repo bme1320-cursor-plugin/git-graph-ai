@@ -11,6 +11,11 @@ View a Git Graph of your repository, and easily perform Git actions from the gra
         * Local & Remote Branches
         * Local Refs: Heads, Tags & Remotes
         * Uncommitted Changes
+    * **AI-Enhanced Analysis** (NEW):
+        * **Comprehensive Commit Analysis**: Get intelligent summaries of commit changes that focus on overall purpose, technical impact, and business value rather than individual file details
+        * **Smart Version Comparison**: Receive integrated analysis of changes between any two commits, highlighting evolution patterns and architectural improvements
+        * **Configurable File Type Support**: Customize which file types are analyzed by AI (supports common programming languages and text files)
+        * **Performance Optimized**: Intelligent batching and concurrent processing to minimize analysis time
     * Perform Git Actions (available by right clicking on a commit / branch / tag):
         * Create, Checkout, Delete, Fetch, Merge, Pull, Push, Rebase, Rename & Reset Branches
         * Add, Delete & Push Tags
@@ -72,6 +77,13 @@ View a Git Graph of your repository, and easily perform Git actions from the gra
 Detailed information of all Git Graph settings is available [here](https://github.com/mhutchie/vscode-git-graph/wiki/Extension-Settings), including: descriptions, screenshots, default values and types.
 
 A summary of the Git Graph extension settings are:
+* **AI Analysis** (NEW):
+    * **Enabled**: Enable or disable AI-powered analysis of commits and file changes (default: `true`)
+    * **Max Files Per Analysis**: Maximum number of files to analyze in a single request to prevent performance issues (default: `10`)
+    * **Supported File Extensions**: Array of file extensions that should be analyzed by AI (default: `[".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".c", ".cpp", ".cs", ".php", ".rb", ".go", ".rs", ".swift", ".kt", ".scala", ".md", ".txt", ".json", ".xml", ".yaml", ".yml", ".html", ".css", ".scss", ".less", ".sql", ".sh", ".bat", ".ps1"]`)
+    * **Excluded File Extensions**: Array of file extensions to exclude from AI analysis (default: `[".min.js", ".min.css", ".bundle.js", ".chunk.js", ".map", ".lock", ".log"]`)
+    * **Timeout**: Request timeout for AI analysis in seconds (default: `10`)
+    * **Batch Size**: Number of files to process concurrently (default: `3`)
 * **Commit Details View**:
     * **Auto Center**: Automatically center the Commit Details View when it is opened.
     * **File View**:
@@ -214,3 +226,206 @@ Thank you to all of the contributors that help with the development of Git Graph
 Some of the icons used in Git Graph are from the following sources, please support them for their excellent work!
 - [GitHub Octicons](https://octicons.github.com/) ([License](https://github.com/primer/octicons/blob/master/LICENSE))
 - [Icons8](https://icons8.com/icon/pack/free-icons/ios11) ([License](https://icons8.com/license))
+
+# Git Graph AI Enhanced
+
+基于原版 Git Graph VSCode 扩展的 AI 增强版本，为 Git 提交和差异比较添加智能分析功能。
+
+## ✨ 新增功能
+
+### 🤖 AI 智能分析
+- **提交分析**: 自动分析单个提交的变更内容，提供智能摘要
+- **版本比较**: 对比不同提交之间的差异，生成详细的变更分析
+- **多文件支持**: 同时分析多个文件的变更，提供综合性分析报告
+- **智能过滤**: 自动识别文本文件，跳过二进制文件和不相关文件
+- **可配置**: 支持自定义分析参数和文件类型过滤
+
+### 📊 增强的用户界面
+- **结构化显示**: 美观的AI分析结果展示界面
+- **统计信息**: 详细的文件变更统计
+- **响应式设计**: 适配不同屏幕尺寸
+
+## 🚀 快速开始
+
+### 1. 安装扩展
+从 VSCode 扩展市场安装 "Git Graph AI Enhanced"
+
+### 2. 启动 AI 服务
+```bash
+# 进入 AI 服务目录
+cd ai_service
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 设置 OpenAI API 密钥
+export OPENAI_API_KEY="your-api-key-here"
+
+# 启动服务
+python start_ai_service.py
+```
+
+### 3. 配置代理（如需要）
+如果在中国大陆使用，可能需要配置代理：
+```bash
+export http_proxy="http://127.0.0.1:7890"
+export https_proxy="http://127.0.0.1:7890"
+```
+
+### 4. 开始使用
+1. 在 VSCode 中打开 Git 仓库
+2. 使用命令面板 (`Ctrl+Shift+P`) 搜索 "Git Graph"
+3. 点击任意提交查看详情，AI 分析将自动显示
+4. 选择两个提交进行比较，查看智能差异分析
+
+## ⚙️ 配置选项
+
+在 VSCode 设置中可以配置以下选项：
+
+### AI 分析设置
+- `git-graph.aiAnalysis.enabled`: 启用/禁用 AI 分析功能
+- `git-graph.aiAnalysis.maxFilesPerAnalysis`: 单次分析的最大文件数量
+- `git-graph.aiAnalysis.supportedFileExtensions`: 支持分析的文件扩展名
+- `git-graph.aiAnalysis.excludedFileExtensions`: 排除分析的文件扩展名
+- `git-graph.aiAnalysis.timeout`: AI 分析请求超时时间
+- `git-graph.aiAnalysis.batchSize`: 批量分析的并发数量
+
+### 默认配置
+```json
+{
+  "git-graph.aiAnalysis.enabled": true,
+  "git-graph.aiAnalysis.maxFilesPerAnalysis": 10,
+  "git-graph.aiAnalysis.supportedFileExtensions": [
+    ".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".c", ".cpp",
+    ".cs", ".php", ".rb", ".go", ".rs", ".swift", ".kt",
+    ".html", ".css", ".scss", ".md", ".txt", ".json", ".xml"
+  ],
+  "git-graph.aiAnalysis.excludedFileExtensions": [
+    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".exe", ".dll"
+  ],
+  "git-graph.aiAnalysis.timeout": 10000,
+  "git-graph.aiAnalysis.batchSize": 3
+}
+```
+
+## 🔧 技术架构
+
+### 前端 (VSCode 扩展)
+- **TypeScript**: 主要开发语言
+- **Web Components**: 用户界面组件
+- **CSS**: 样式和主题适配
+
+### 后端 (AI 服务)
+- **Python Flask**: Web 服务框架
+- **OpenAI API**: AI 分析引擎
+- **HTTP API**: 前后端通信接口
+
+### 数据流
+1. 用户在 Git Graph 中选择提交或进行比较
+2. 扩展提取文件差异和内容
+3. 通过 HTTP API 发送到 AI 服务
+4. AI 服务调用 OpenAI API 进行分析
+5. 返回分析结果并在界面中展示
+
+## 📝 API 接口
+
+### 健康检查
+```
+GET /health
+```
+
+### 分析单个文件差异
+```
+POST /analyze_diff
+Content-Type: application/json
+
+{
+  "file_path": "src/example.js",
+  "file_diff": "diff content...",
+  "content_before": "...",
+  "content_after": "..."
+}
+```
+
+### 批量分析
+```
+POST /analyze_batch
+Content-Type: application/json
+
+{
+  "files": [
+    {
+      "file_path": "src/file1.js",
+      "file_diff": "...",
+      "content_before": "...",
+      "content_after": "..."
+    }
+  ]
+}
+```
+
+## 🛠️ 开发指南
+
+### 环境要求
+- Node.js 14+
+- Python 3.7+
+- VSCode 1.38.0+
+
+### 本地开发
+```bash
+# 克隆仓库
+git clone <repository-url>
+cd git-graph-ai
+
+# 安装前端依赖
+npm install
+
+# 编译扩展
+npm run compile
+
+# 启动 AI 服务
+cd ai_service
+pip install -r requirements.txt
+python start_ai_service.py
+```
+
+### 构建和打包
+```bash
+# 编译所有代码
+npm run compile
+
+# 打包扩展
+npm run package
+```
+
+## 🤝 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
+### 开发流程
+1. Fork 本仓库
+2. 创建功能分支
+3. 提交更改
+4. 创建 Pull Request
+
+### 代码规范
+- 使用 TypeScript 进行类型检查
+- 遵循 ESLint 规则
+- 添加适当的注释和文档
+
+## 📄 许可证
+
+本项目基于原版 Git Graph 扩展，遵循相同的许可证条款。
+
+## 🙏 致谢
+
+- 感谢 [mhutchie](https://github.com/mhutchie) 开发的原版 Git Graph 扩展
+- 感谢 OpenAI 提供的 AI 分析能力
+- 感谢所有贡献者和用户的支持
+
+## 📞 支持
+
+如果遇到问题或有建议，请：
+1. 查看 [常见问题](docs/FAQ.md)
+2. 提交 [Issue](https://github.com/your-repo/issues)
+3. 参与 [讨论](https://github.com/your-repo/discussions)

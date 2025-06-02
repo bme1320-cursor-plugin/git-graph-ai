@@ -1115,7 +1115,60 @@
 				"git-graph.repository.useMailmap": {
 					"type": "boolean",
 					"default": false,
-					"markdownDescription": "Respect [.mailmap](https://git-scm.com/docs/git-check-mailmap#_mapping_authors) files when displaying author & committer names and email addresses."
+					"markdownDescription": "Respect [.mailmap](https://git-scm.com/docs/git-check-mailmap#_mapping_authors) files when displaying author & committer names and email addresses.",
+					"deprecationMessage": "Depreciated: This setting has been renamed to git-graph.repository.useMailmap",
+					"markdownDeprecationMessage": "Depreciated: This setting has been renamed to `#git-graph.repository.useMailmap#`"
+				},
+				"git-graph.aiAnalysis.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable AI-powered analysis of commit changes and file diffs."
+				},
+				"git-graph.aiAnalysis.maxFilesPerAnalysis": {
+					"type": "number",
+					"default": 10,
+					"minimum": 1,
+					"maximum": 50,
+					"description": "Maximum number of files to analyze with AI in a single commit or comparison."
+				},
+				"git-graph.aiAnalysis.supportedFileExtensions": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						".js", ".ts", ".jsx", ".tsx", ".py", ".java", ".c", ".cpp", ".h", ".hpp",
+						".cs", ".php", ".rb", ".go", ".rs", ".swift", ".kt", ".scala", ".clj",
+						".html", ".css", ".scss", ".less", ".vue", ".svelte", ".md", ".txt",
+						".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf"
+					],
+					"description": "File extensions that are supported for AI analysis."
+				},
+				"git-graph.aiAnalysis.excludedFileExtensions": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp", ".ico",
+						".pdf", ".zip", ".tar", ".gz", ".exe", ".dll", ".so", ".dylib",
+						".bin", ".obj", ".class", ".jar", ".war", ".ear", ".aar"
+					],
+					"description": "File extensions that are excluded from AI analysis."
+				},
+				"git-graph.aiAnalysis.timeout": {
+					"type": "number",
+					"default": 10000,
+					"minimum": 3000,
+					"maximum": 30000,
+					"description": "Timeout in milliseconds for AI analysis requests."
+				},
+				"git-graph.aiAnalysis.batchSize": {
+					"type": "number",
+					"default": 3,
+					"minimum": 1,
+					"maximum": 10,
+					"description": "Number of files to analyze concurrently in a batch."
 				},
 				"git-graph.repositoryDropdownOrder": {
 					"type": "string",
@@ -1515,7 +1568,7 @@
 		"vscode:prepublish": "npm run compile",
 		"vscode:uninstall": "node ./out/life-cycle/uninstall.js",
 		"clean": "node ./.vscode/clean.js",
-		"compile": "npm run lint && npm run clean && npm run compile-src && npm run compile-web",
+		"compile": "npm run lint -- --fix && npm run clean && npm run compile-src && npm run compile-web",
 		"compile-src": "tsc -p ./src && node ./.vscode/package-src.js",
 		"compile-web": "tsc -p ./web && node ./.vscode/package-web.js",
 		"compile-web-debug": "tsc -p ./web && node ./.vscode/package-web.js debug",
