@@ -6,11 +6,11 @@ import * as vscode from 'vscode';
 import { AskpassEnvironment, AskpassManager } from './askpass/askpassManager';
 import { getConfig } from './config';
 import { Logger } from './logger';
-import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionPrefix, FileHistoryAIAnalysis, GitCommit, GitCommitDetails, GitCommitStash, GitConfigLocation, GitFileChange, GitFileHistoryCommit, GitFileHistoryData, GitFileStatus, GitPushBranchMode, GitRepoConfig, GitRepoConfigBranches, GitResetMode, GitSignature, GitSignatureStatus, GitStash, GitTagDetails, MergeActionOn, RebaseActionOn, SquashMessageFormat, TagType, Writeable } from './types';
+import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionPrefix, FileHistoryAIAnalysis, FileVersionComparisonAIAnalysis, GitCommit, GitCommitDetails, GitCommitStash, GitConfigLocation, GitFileChange, GitFileHistoryCommit, GitFileHistoryData, GitFileStatus, GitFileVersionComparisonData, GitPushBranchMode, GitRepoConfig, GitRepoConfigBranches, GitResetMode, GitSignature, GitSignatureStatus, GitStash, GitTagDetails, MergeActionOn, RebaseActionOn, SquashMessageFormat, TagType, Writeable } from './types';
 import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, abbrevCommit, constructIncompatibleGitVersionMessage, doesVersionMeetRequirement, getPathFromStr, getPathFromUri, openGitTerminal, pathWithTrailingSlash, realpath, resolveSpawnOutput, showErrorMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
-import { analyzeDiff, analyzeFileHistory } from './aiService';
+import { analyzeDiff, analyzeFileHistory, analyzeFileVersionComparison } from './aiService';
 
 const DRIVE_LETTER_PATH_REGEX = /^[a-z]:\//;
 const EOL_REGEX = /\r\n|\r|\n/g;
@@ -2816,6 +2816,284 @@ ${index + 1}. [${date}] ${commit.author}
 	 */
 	public async triggerFileHistoryAIAnalysis(filePath: string, commits: GitFileHistoryCommit[]): Promise<void> {
 		return this.performAsyncFileHistoryAnalysis(filePath, commits);
+	}
+
+	/**
+	 * Get the comparison between two versions of a specific file
+	 * @param repo The path of the repository
+	 * @param filePath The path of the file
+	 * @param fromHash The commit hash of the source version
+	 * @param toHash The commit hash of the target version
+	 * @returns The file version comparison data
+	 */
+	public async getFileVersionComparison(repo: string, filePath: string, fromHash: string, toHash: string): Promise<GitFileVersionComparisonData> {
+		try {
+			this.logger.log(`Getting file version comparison for ${filePath} from ${fromHash} to ${toHash}`);
+
+			// 获取文件差异信息
+			const [diffNameStatus, diffNumStat, diffContent] = await Promise.all([
+				this.getDiffNameStatus(repo, fromHash, toHash, 'AMDR').catch(() => []),
+				this.getDiffNumStat(repo, fromHash, toHash, 'AMDR').catch(() => []),
+				this.getDiffBetweenRevisions(repo, fromHash, toHash, filePath).catch(() => null)
+			]);
+
+			// 查找该文件的变更信息
+			let fileChange: GitFileChange | null = null;
+			const fileNameStatusRecord = diffNameStatus.find(record =>
+				record.newFilePath === filePath || record.oldFilePath === filePath
+			);
+			const fileNumStatRecord = diffNumStat.find(record => record.filePath === filePath);
+
+			if (fileNameStatusRecord) {
+				fileChange = {
+					oldFilePath: fileNameStatusRecord.oldFilePath,
+					newFilePath: fileNameStatusRecord.newFilePath,
+					type: fileNameStatusRecord.type,
+					additions: fileNumStatRecord?.additions || null,
+					deletions: fileNumStatRecord?.deletions || null
+				};
+			}
+
+			// 立即返回基本数据，不等待AI分析
+			const basicResult: GitFileVersionComparisonData = {
+				filePath: filePath,
+				fromHash: fromHash,
+				toHash: toHash,
+				fileChange: fileChange,
+				diffContent: diffContent,
+				aiAnalysis: null,
+				error: null
+			};
+
+			// 异步执行AI分析
+			const config = getConfig();
+			const aiConfig = config.aiAnalysis;
+
+			if (aiConfig.enabled && diffContent && diffContent.trim() !== '') {
+				this.performAsyncFileVersionComparisonAnalysis(repo, filePath, fromHash, toHash, diffContent, aiConfig)
+					.catch(error => {
+						this.logger.logError(`Async file version comparison AI analysis failed for ${filePath} (${fromHash}..${toHash}): ${error}`);
+					});
+			}
+
+			return basicResult;
+
+		} catch (error) {
+			this.logger.logError(`Failed to get file version comparison for ${filePath}: ${error}`);
+			return {
+				filePath: filePath,
+				fromHash: fromHash,
+				toHash: toHash,
+				fileChange: null,
+				diffContent: null,
+				aiAnalysis: null,
+				error: `Failed to get file version comparison: ${error}`
+			};
+		}
+	}
+
+	/**
+	 * Perform AI analysis for file version comparison asynchronously
+	 */
+	private async performAsyncFileVersionComparisonAnalysis(
+		repo: string,
+		filePath: string,
+		fromHash: string,
+		toHash: string,
+		diffContent: string,
+		_aiConfig: any // Add underscore prefix to mark as intentionally unused
+	): Promise<void> {
+		try {
+			this.logger.log(`Starting async AI analysis for file version comparison: ${filePath} (${fromHash}..${toHash})`);
+
+			// 获取文件内容
+			const [contentBefore, contentAfter] = await Promise.all([
+				this.getCommitFile(repo, fromHash, filePath).catch(() => null),
+				this.getCommitFile(repo, toHash, filePath).catch(() => null)
+			]);
+
+			// 生成AI分析
+			const analysis = await this.generateFileVersionComparisonAnalysis(
+				filePath,
+				fromHash,
+				toHash,
+				diffContent,
+				contentBefore,
+				contentAfter,
+				this.logger
+			);
+
+			if (analysis) {
+				// 发送AI分析更新
+				this.sendFileVersionComparisonAIAnalysisUpdate(filePath, fromHash, toHash, analysis);
+			}
+
+		} catch (error) {
+			this.logger.logError(`Failed to perform async file version comparison AI analysis: ${error}`);
+		}
+	}
+
+	/**
+	 * Generate AI analysis for file version comparison
+	 */
+	private async generateFileVersionComparisonAnalysis(
+		filePath: string,
+		fromHash: string,
+		toHash: string,
+		diffContent: string,
+		contentBefore: string | null,
+		contentAfter: string | null,
+		logger: Logger
+	): Promise<FileVersionComparisonAIAnalysis | null> {
+		try {
+			const prompt = this.buildFileVersionComparisonPrompt(filePath, fromHash, toHash, diffContent, contentBefore, contentAfter);
+
+			// 使用专门的文件版本比较AI服务进行分析
+			const analysis = await analyzeFileVersionComparison(
+				filePath,
+				prompt,
+				logger
+			);
+
+			if (analysis && analysis.summary) {
+				return this.parseFileVersionComparisonAnalysis(analysis.summary);
+			}
+
+		} catch (error) {
+			logger.logError(`Failed to generate AI analysis for file version comparison: ${error}`);
+		}
+		return null;
+	}
+
+	/**
+	 * Build prompt for file version comparison AI analysis
+	 */
+	private buildFileVersionComparisonPrompt(
+		filePath: string,
+		fromHash: string,
+		toHash: string,
+		diffContent: string,
+		contentBefore: string | null,
+		contentAfter: string | null
+	): string {
+		const fileName = filePath.split('/').pop() || filePath;
+		const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
+
+		let prompt = `请对以下文件版本比较进行深度分析：
+
+文件信息：
+- 文件路径：${filePath}
+- 文件名：${fileName}
+- 文件类型：${fileExtension}
+- 源版本：${fromHash.substring(0, 8)}
+- 目标版本：${toHash.substring(0, 8)}
+
+Git Diff内容：
+\`\`\`diff
+${diffContent}
+\`\`\`
+`;
+
+		if (contentBefore && contentAfter) {
+			prompt += `
+版本前内容预览（前200字符）：
+\`\`\`
+${contentBefore.substring(0, 200)}${contentBefore.length > 200 ? '...' : ''}
+\`\`\`
+
+版本后内容预览（前200字符）：
+\`\`\`
+${contentAfter.substring(0, 200)}${contentAfter.length > 200 ? '...' : ''}
+\`\`\`
+`;
+		}
+
+		prompt += `
+请按以下JSON格式提供分析结果：
+
+{
+  "summary": "这次文件变更的简要总结（不超过100字）",
+  "changeType": "变更类型描述（如：功能增强、bug修复、重构等）",
+  "impactAnalysis": "变更影响分析（对系统、用户、性能等方面的影响）",
+  "keyModifications": [
+    "第一个关键修改点",
+    "第二个关键修改点",
+    "第三个关键修改点"
+  ],
+  "recommendations": [
+    "第一个建议或注意事项",
+    "第二个建议或注意事项"
+  ]
+}
+
+要求：
+1. 严格返回有效的JSON格式，不要添加其他内容
+2. 所有字段都用中文填写
+3. keyModifications和recommendations数组每项不超过50字
+4. 分析要专业且有价值
+5. 基于实际的代码变更提供见解`;
+
+		return prompt;
+	}
+
+	/**
+	 * Parse file version comparison AI analysis result
+	 */
+	private parseFileVersionComparisonAnalysis(analysisText: string): FileVersionComparisonAIAnalysis {
+		try {
+			// 尝试解析JSON
+			const parsed = JSON.parse(analysisText);
+
+			if (parsed.summary && parsed.changeType && parsed.impactAnalysis &&
+				Array.isArray(parsed.keyModifications) && Array.isArray(parsed.recommendations)) {
+				return {
+					summary: parsed.summary,
+					changeType: parsed.changeType,
+					impactAnalysis: parsed.impactAnalysis,
+					keyModifications: parsed.keyModifications,
+					recommendations: parsed.recommendations
+				};
+			}
+		} catch (error) {
+			this.logger.logError(`Failed to parse file version comparison analysis JSON: ${error}`);
+		}
+
+		// 如果JSON解析失败，尝试从文本中提取信息
+		return this.extractFileVersionComparisonInfoFromText(analysisText);
+	}
+
+	/**
+	 * Extract file version comparison analysis info from plain text
+	 */
+	private extractFileVersionComparisonInfoFromText(analysisText: string): FileVersionComparisonAIAnalysis {
+		// 提供一个基础的结构化响应
+		return {
+			summary: analysisText.substring(0, 100) + (analysisText.length > 100 ? '...' : ''),
+			changeType: '代码变更',
+			impactAnalysis: '此次变更对文件结构和功能产生了一定影响',
+			keyModifications: [
+				'文件内容已发生变化',
+				'代码逻辑可能有所调整',
+				'建议查看具体的diff内容了解详情'
+			],
+			recommendations: [
+				'仔细审查变更内容确保符合预期',
+				'考虑进行相关测试以验证功能正确性'
+			]
+		};
+	}
+
+	/**
+	 * Send file version comparison AI analysis update
+	 */
+	private sendFileVersionComparisonAIAnalysisUpdate(filePath: string, fromHash: string, toHash: string, analysis: FileVersionComparisonAIAnalysis) {
+		if (this.aiAnalysisUpdateCallback) {
+			this.logger.log(`Sending file version comparison AI analysis update for ${filePath} (${fromHash}..${toHash})`);
+
+			// 使用特殊的commitHash格式来标识这是文件版本比较的AI分析
+			const specialCommitHash = `file_comparison:${filePath}:${fromHash}:${toHash}`;
+			this.aiAnalysisUpdateCallback(specialCommitHash, null, analysis);
+		}
 	}
 }
 

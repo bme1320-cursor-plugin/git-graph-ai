@@ -109,6 +109,18 @@ export class GitGraphView extends Disposable {
 				});
 
 				this.logger.log(`[AI Callback] Sent fileHistoryAIAnalysisUpdate message for file: ${filePath}`);
+			} else if (commitHash.startsWith('file_comparison:')) {
+				// Handle file version comparison AI analysis
+				const parts = commitHash.split(':');
+				if (parts.length === 4) {
+					const filePath = parts[1];
+					const fromHash = parts[2];
+					const toHash = parts[3];
+					this.logger.log(`[AI Callback] This is a file version comparison AI analysis for file: ${filePath} (${fromHash}..${toHash})`);
+
+					// Send file version comparison AI analysis update to file history panels
+					this.sendFileVersionComparisonAIUpdateToFileHistoryPanels(filePath, fromHash, toHash, aiAnalysis);
+				}
 			} else {
 				this.logger.log(`[AI Callback] This is a regular commit AI analysis for commit: ${commitHash}`);
 				// Send regular AI analysis update
@@ -682,6 +694,19 @@ export class GitGraphView extends Disposable {
 					error: await this.openFileHistoryInNewTab(msg.repo, msg.filePath)
 				});
 				break;
+			case 'fileHistoryComparison':
+				const fileComparisonData = await this.dataSource.getFileVersionComparison(msg.repo, msg.filePath, msg.fromHash, msg.toHash);
+				this.sendMessage({
+					command: 'fileHistoryComparison',
+					filePath: msg.filePath,
+					fromHash: msg.fromHash,
+					toHash: msg.toHash,
+					fileChange: fileComparisonData.fileChange,
+					diffContent: fileComparisonData.diffContent,
+					aiAnalysis: fileComparisonData.aiAnalysis,
+					error: fileComparisonData.error
+				});
+				break;
 		}
 
 		this.repoFileWatcher.unmute();
@@ -753,6 +778,41 @@ export class GitGraphView extends Disposable {
 		} else {
 			this.logger.log(`[File History] Message is not a fileHistoryAIAnalysisUpdate. Received: ${msg.command}`);
 		}
+	}
+
+	/**
+	 * Send file version comparison AI analysis update messages to file history panels
+	 */
+	private sendFileVersionComparisonAIUpdateToFileHistoryPanels(filePath: string, fromHash: string, toHash: string, aiAnalysis: any) {
+		this.logger.log(`[File History] Sending file version comparison AI analysis update for ${filePath} (${fromHash}..${toHash})`);
+
+		// Find panels that match this file path
+		GitGraphView.fileHistoryPanels.forEach((panel, panelKey) => {
+			const [_repo, panelFilePath] = panelKey.split('|'); // Add underscore prefix to mark as intentionally unused
+			this.logger.log(`[File History] Checking panel ${panelKey}, extracted filePath: ${panelFilePath}, target filePath: ${filePath}`);
+
+			if (panelFilePath === filePath && aiAnalysis) {
+				this.logger.log(`[File History] Found matching panel for ${filePath}, sending version comparison update...`);
+
+				// Send update to the specific file history panel
+				panel.webview.postMessage({
+					command: 'updateFileVersionComparisonAIAnalysis',
+					filePath: filePath,
+					fromHash: fromHash,
+					toHash: toHash,
+					analysis: aiAnalysis
+				}).then(
+					() => {
+						this.logger.log(`[File History] Successfully sent file version comparison AI analysis update to file history panel: ${panelKey}`);
+					},
+					(error) => {
+						this.logger.logError(`[File History] Failed to send file version comparison AI analysis update to file history panel ${panelKey}: ${error}`);
+					}
+				);
+			} else {
+				this.logger.log(`[File History] Panel ${panelKey} does not match (filePath: ${panelFilePath} vs ${filePath}) or no analysis data (${!!aiAnalysis})`);
+			}
+		});
 	}
 
 	/**
@@ -959,7 +1019,7 @@ export class GitGraphView extends Disposable {
 			const nonce = getNonce();
 			const fileName = filePath.split('/').pop() || filePath;
 
-			panel.webview.html = this.generateFileHistoryHTML(fileHistoryData, fileName, nonce);
+			panel.webview.html = this.generateFileHistoryHTML(fileHistoryData, fileName, nonce, repo);
 
 			// Store the panel reference
 			GitGraphView.fileHistoryPanels.set(panelKey, panel);
@@ -972,10 +1032,36 @@ export class GitGraphView extends Disposable {
 				GitGraphView.fileHistoryPanels.delete(panelKey);
 			});
 
-			// Handle messages from the webview (if needed)
-			panel.webview.onDidReceiveMessage((message) => {
-				// Handle any messages from the file history webview if needed
+			// Handle messages from the webview (file version comparison requests)
+			panel.webview.onDidReceiveMessage(async (message) => {
 				this.logger.log(`[File History Panel] Received message from file history panel: ${JSON.stringify(message)}`);
+
+				if (message.command === 'fileHistoryComparison') {
+					// Process file version comparison request
+					const fileComparisonData = await this.dataSource.getFileVersionComparison(
+						repo, // Use the repo parameter from the closure
+						message.filePath,
+						message.fromHash,
+						message.toHash
+					);
+
+					// Determine AI analysis status
+					const hasImmediateAIAnalysis = !!fileComparisonData.aiAnalysis;
+					const aiAnalysisStatus = hasImmediateAIAnalysis ? 'completed' : 'pending';
+
+					// Send response back to the webview
+					panel.webview.postMessage({
+						command: 'fileHistoryComparison',
+						filePath: message.filePath,
+						fromHash: message.fromHash,
+						toHash: message.toHash,
+						fileChange: fileComparisonData.fileChange,
+						diffContent: fileComparisonData.diffContent,
+						aiAnalysis: fileComparisonData.aiAnalysis,
+						aiAnalysisStatus: aiAnalysisStatus, // Add status indicator
+						error: fileComparisonData.error
+					});
+				}
 			});
 
 			// Start async AI analysis after panel is created and shown
@@ -997,11 +1083,12 @@ export class GitGraphView extends Disposable {
 	/**
 	 * Generate HTML content for the file history webview
 	 */
-	private generateFileHistoryHTML(fileHistoryData: any, fileName: string, nonce: string): string {
+	private generateFileHistoryHTML(fileHistoryData: any, fileName: string, nonce: string, repo?: string): string {
 		// Transform data to match the template interface
 		const options: FileHistoryTemplateOptions = {
 			fileName: fileName,
 			filePath: fileHistoryData.filePath,
+			repo: repo || '', // Include repo information
 			stats: {
 				totalCommits: fileHistoryData.commits.length,
 				totalAdditions: fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.additions || 0), 0),

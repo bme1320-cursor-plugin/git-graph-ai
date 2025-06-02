@@ -1315,6 +1315,42 @@ export interface ResponseOpenFileHistoryInNewTab extends ResponseWithErrorInfo {
 	readonly command: 'openFileHistoryInNewTab';
 }
 
+export interface RequestFileHistoryComparison extends RepoRequest {
+	readonly command: 'fileHistoryComparison';
+	readonly filePath: string;
+	readonly fromHash: string;
+	readonly toHash: string;
+}
+
+export interface ResponseFileHistoryComparison extends ResponseWithErrorInfo {
+	readonly command: 'fileHistoryComparison';
+	readonly filePath: string;
+	readonly fromHash: string;
+	readonly toHash: string;
+	readonly fileChange: GitFileChange | null;
+	readonly diffContent: string | null;
+	readonly aiAnalysis?: FileVersionComparisonAIAnalysis | null;
+	readonly aiAnalysisStatus?: 'completed' | 'pending' | 'failed';
+}
+
+export interface FileVersionComparisonAIAnalysis {
+	readonly summary: string;
+	readonly changeType: string;
+	readonly impactAnalysis: string;
+	readonly keyModifications: string[];
+	readonly recommendations: string[];
+}
+
+export interface GitFileVersionComparisonData {
+	readonly filePath: string;
+	readonly fromHash: string;
+	readonly toHash: string;
+	readonly fileChange: GitFileChange | null;
+	readonly diffContent: string | null;
+	readonly aiAnalysis: FileVersionComparisonAIAnalysis | null;
+	readonly error: ErrorInfo;
+}
+
 export type RequestMessage =
 	RequestAddRemote
 	| RequestAddTag
@@ -1379,7 +1415,8 @@ export type RequestMessage =
 	| RequestViewDiffWithWorkingFile
 	| RequestViewFileAtRevision
 	| RequestViewScm
-	| RequestFileHistory;
+	| RequestFileHistory
+	| RequestFileHistoryComparison;
 
 export type ResponseMessage =
 	ResponseAddRemote
@@ -1444,7 +1481,8 @@ export type ResponseMessage =
 	| ResponseViewScm
 	| ResponseAIAnalysisUpdate
 	| ResponseFileHistory
-	| ResponseFileHistoryAIAnalysisUpdate;
+	| ResponseFileHistoryAIAnalysisUpdate
+	| ResponseFileHistoryComparison;
 
 
 /** Helper Types */

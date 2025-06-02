@@ -369,6 +369,107 @@ def generate_fallback_file_history_json(file_path):
         ]
     }, ensure_ascii=False)
 
+@app.route('/analyze_file_version_comparison', methods=['POST'])
+def analyze_file_version_comparison():
+    """专门处理文件版本比较分析的端点"""
+    if not openai_client:
+        return jsonify({
+            "analysis": {
+                "summary": "AI分析服务暂时不可用，请检查OpenAI API配置。",
+            }
+        })
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Missing data in request"}), 400
+        
+        file_path = data.get('file_path', '未知文件')
+        prompt = data.get('file_diff', '')  # 文件版本比较分析的完整提示
+        
+        if not prompt:
+            return jsonify({"error": "Missing analysis prompt"}), 400
+        
+        print(f"Received file version comparison analysis request for: {file_path}")
+        
+        try:
+            chat_completion = openai_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的代码版本比较分析师。请严格按照用户要求的JSON格式回答，不要添加任何额外的文本或格式化。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                model="gpt-4.1-mini",
+                max_tokens=500,
+                temperature=0.3,
+                n=1
+            )
+
+            ai_summary = chat_completion.choices[0].message.content.strip()
+            print(f"File Version Comparison Analysis Raw Response for {file_path}: {ai_summary}")
+
+            # 尝试验证返回的是有效的JSON
+            try:
+                import json
+                test_parse = json.loads(ai_summary)
+                required_fields = ['summary', 'changeType', 'impactAnalysis', 'keyModifications', 'recommendations']
+                if not all(key in test_parse for key in required_fields):
+                    raise ValueError("Missing required fields in AI response")
+                print(f"File Version Comparison Analysis JSON validation passed for {file_path}")
+            except (json.JSONDecodeError, ValueError) as parse_error:
+                print(f"AI returned invalid JSON for {file_path}, using fallback: {parse_error}")
+                ai_summary = generate_fallback_file_version_comparison_json(file_path)
+
+            return jsonify({
+                "analysis": {
+                    "summary": ai_summary,
+                }
+            })
+
+        except OpenAIError as e:
+            print(f"OpenAI API error for file version comparison analysis: {e}")
+            fallback_analysis = generate_fallback_file_version_comparison_json(file_path)
+            return jsonify({
+                "analysis": {
+                    "summary": fallback_analysis,
+                }
+            })
+        except Exception as e:
+            print(f"Unexpected error during file version comparison analysis: {e}")
+            fallback_analysis = generate_fallback_file_version_comparison_json(file_path)
+            return jsonify({
+                "analysis": {
+                    "summary": fallback_analysis,
+                }
+            })
+
+    except Exception as e:
+        print(f"Error processing file version comparison analysis: {e}")
+        return jsonify({"error": "An internal server error occurred"}), 500
+
+def generate_fallback_file_version_comparison_json(file_path):
+    """生成备用的JSON格式文件版本比较分析"""
+    file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+    return json.dumps({
+        "summary": f"文件 {file_name} 在两个版本之间发生了变更",
+        "changeType": "代码修改",
+        "impactAnalysis": "此次变更对文件内容产生了影响，需要进一步评估具体的功能性影响",
+        "keyModifications": [
+            "文件内容在两个版本间存在差异",
+            "具体变更需要查看diff内容",
+            "建议审查变更的业务逻辑影响"
+        ],
+        "recommendations": [
+            "仔细检查变更内容确保符合预期",
+            "考虑进行相关测试验证功能正确性"
+        ]
+    }, ensure_ascii=False)
+
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
     """批量分析多个文件的差异"""
@@ -432,6 +533,7 @@ if __name__ == '__main__':
     print(f"Health check available at: http://127.0.0.1:5111/health")
     print(f"Analysis endpoint available at: http://127.0.0.1:5111/analyze_diff")
     print(f"File history analysis endpoint available at: http://127.0.0.1:5111/analyze_file_history")
+    print(f"File version comparison analysis endpoint available at: http://127.0.0.1:5111/analyze_file_version_comparison")
     print(f"Batch analysis endpoint available at: http://127.0.0.1:5111/analyze_batch")
     # Note: Use '0.0.0.0' to be accessible from the extension container
     # Use a specific port, e.g., 5111

@@ -351,3 +351,103 @@ export function analyzeFileHistory(
 		req.end();
 	});
 }
+
+/**
+ * Analyze file version comparison using the dedicated endpoint
+ * @param filePath The path of the file
+ * @param prompt The analysis prompt
+ * @param logger Optional logger instance
+ * @returns A Promise resolving to the AIAnalysis object or null if analysis fails
+ */
+export function analyzeFileVersionComparison(
+	filePath: string,
+	prompt: string,
+	logger?: Logger
+): Promise<AIAnalysis | null> {
+	return new Promise(async (resolve) => {
+		// 检查输入有效性
+		if (!prompt || prompt.trim() === '') {
+			logger?.log(`[AI Service] Skipping empty prompt for file version comparison: ${filePath}`);
+			resolve(null);
+			return;
+		}
+
+		// 尝试从缓存获取结果
+		if (cacheManager) {
+			const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
+			const cachedResult = await cacheManager.get(cacheKey);
+			if (cachedResult) {
+				logger?.log(`[AI Service] Cache hit for file version comparison: ${filePath}`);
+				resolve(cachedResult);
+				return;
+			}
+		}
+
+		const postData = JSON.stringify({
+			file_path: filePath,
+			file_diff: prompt // 复用这个字段传递完整的提示词
+		});
+
+		const options: http.RequestOptions = {
+			hostname: AI_SERVICE_HOST,
+			port: AI_SERVICE_PORT,
+			path: '/analyze_file_version_comparison', // 使用专门的文件版本比较分析端点
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Content-Length': Buffer.byteLength(postData)
+			},
+			timeout: 15000 // 文件版本比较分析可能需要更长时间
+		};
+
+		logger?.log(`[AI Service] Sending file version comparison analysis request for: ${filePath}`);
+
+		const req = http.request(options, (res) => {
+			let data = '';
+
+			res.on('data', (chunk) => {
+				data += chunk;
+			});
+
+			res.on('end', async () => {
+				try {
+					const response = JSON.parse(data);
+					if (response.analysis && response.analysis.summary) {
+						const aiAnalysis: AIAnalysis = {
+							summary: response.analysis.summary
+						};
+
+						// 缓存结果
+						if (cacheManager) {
+							const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
+							await cacheManager.set(cacheKey, aiAnalysis);
+						}
+
+						logger?.log(`[AI Service] File version comparison analysis completed for: ${filePath}`);
+						resolve(aiAnalysis);
+					} else {
+						logger?.logError(`[AI Service] Invalid response format for file version comparison analysis: ${filePath}`);
+						resolve(null);
+					}
+				} catch (error) {
+					logger?.logError(`[AI Service] Failed to parse file version comparison analysis response for ${filePath}: ${error}`);
+					resolve(null);
+				}
+			});
+		});
+
+		req.on('error', (error) => {
+			logger?.logError(`[AI Service] Request error for file version comparison analysis ${filePath}: ${error}`);
+			resolve(null);
+		});
+
+		req.on('timeout', () => {
+			logger?.logError(`[AI Service] Request timeout for file version comparison analysis: ${filePath}`);
+			req.destroy();
+			resolve(null);
+		});
+
+		req.write(postData);
+		req.end();
+	});
+}

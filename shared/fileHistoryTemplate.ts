@@ -5,6 +5,7 @@
 export interface FileHistoryTemplateOptions {
   fileName: string;
   filePath: string;
+  repo?: string; // Repository name for sending messages back to extension
   stats: {
     totalCommits: number;
     totalAdditions: number;
@@ -24,6 +25,14 @@ export interface FileHistoryTemplateOptions {
     summary: string;
     evolutionPattern: string;
     keyChanges: string[];
+    recommendations: string[];
+  };
+  // New interface for file version comparison analysis
+  comparisonAnalysis?: {
+    summary: string;
+    changeType: string;
+    impactAnalysis: string;
+    keyModifications: string[];
     recommendations: string[];
   };
   isWebView?: boolean; // true for VS Code webview, false for web
@@ -54,6 +63,11 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
       --desc: #999;
       --hover-bg: #2a2d2e;
       --active-bg: #264f78;
+      --compare-bg: #0e639c;
+      --compare-hover: #1177bb;
+      --success: #4caf50;
+      --warning: #ff9800;
+      --error: #f44336;
     }
     * { box-sizing: border-box; }
     body {
@@ -158,6 +172,7 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
       border-bottom: 1px solid var(--border);
       cursor: pointer;
       transition: background-color 0.2s;
+      position: relative;
     }
     .file-history-commit:hover {
       background-color: var(--hover-bg);
@@ -165,6 +180,14 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
     .file-history-commit.selected {
       background-color: var(--active-bg);
       color: #fff;
+    }
+    .file-history-commit.compare-from {
+      background-color: var(--compare-bg);
+      border-left: 4px solid var(--link);
+    }
+    .file-history-commit.compare-to {
+      background-color: var(--success);
+      border-left: 4px solid var(--success);
     }
     .commit-header {
       display: flex;
@@ -181,6 +204,24 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
       font-size: 11px;
       color: var(--link);
       margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .commit-compare-badge {
+      padding: 2px 6px;
+      font-size: 10px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .commit-compare-badge.from {
+      background-color: var(--link);
+      color: white;
+    }
+    .commit-compare-badge.to {
+      background-color: var(--success);
+      color: white;
     }
     .commit-message {
       font-size: 14px;
@@ -217,8 +258,117 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
       min-width: 220px;
       max-width: 400px;
     }
-    .file-history-ai-analysis {
+    .sidebar-tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-tab {
+      flex: 1;
+      padding: 12px 16px;
+      background: none;
+      border: none;
+      color: var(--desc);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-bottom: 2px solid transparent;
+    }
+    .sidebar-tab:hover {
+      background-color: var(--hover-bg);
+      color: var(--foreground);
+    }
+    .sidebar-tab.active {
+      color: var(--link);
+      border-bottom-color: var(--link);
+      background-color: var(--background);
+    }
+    .sidebar-content {
       padding: 20px;
+    }
+    .compare-controls {
+      margin-bottom: 20px;
+      padding: 16px;
+      background-color: var(--background);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .compare-controls h4 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .compare-icon {
+      width: 16px;
+      height: 16px;
+      fill: var(--link);
+    }
+    .compare-info {
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--desc);
+      line-height: 1.4;
+    }
+    .compare-selection {
+      margin-bottom: 8px;
+      padding: 8px;
+      background-color: var(--sidebar-bg);
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .compare-selection.empty {
+      color: var(--desc);
+      font-style: italic;
+    }
+    .compare-selection.selected {
+      color: var(--foreground);
+      font-family: var(--editor-font-family);
+    }
+    .compare-selection-label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 4px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .compare-buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .compare-btn {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--link);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .compare-btn:hover {
+      background: var(--compare-hover);
+    }
+    .compare-btn:disabled {
+      background: var(--desc);
+      cursor: not-allowed;
+    }
+    .clear-btn {
+      background: var(--border);
+      color: var(--foreground);
+    }
+    .clear-btn:hover {
+      background: var(--hover-bg);
+    }
+    .file-history-ai-analysis {
+      padding: 0;
     }
     .ai-analysis-header {
       display: flex;
@@ -310,6 +460,13 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
     `
     : '<div class="ai-analysis-loading">AI analysis loading...</div>';
 
+  // Version comparison AI analysis panel
+  const comparisonAIPanel = `
+    <div id="comparison-ai-analysis" class="ai-analysis-loading">
+      Select two versions to compare and analyze differences...
+    </div>
+  `;
+
   // Commits list
   const commitsHTML = options.commits.length > 0
     ? options.commits.map((commit, index) => {
@@ -318,10 +475,14 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
         const shortHash = commit.hash.substring(0, 8);
         const message = commit.message.split('\n')[0];
         return `
-          <div class="file-history-commit" data-index="${index}">
+          <div class="file-history-commit" data-index="${index}" data-hash="${commit.hash}">
             <div class="commit-header">
               <div class="commit-info">
-                <div class="commit-hash">${shortHash}</div>
+                <div class="commit-hash">
+                  ${shortHash}
+                  <span class="commit-compare-badge from" style="display: none;">FROM</span>
+                  <span class="commit-compare-badge to" style="display: none;">TO</span>
+                </div>
                 <div class="commit-message" title="${escapeHtml(commit.message)}">${escapeHtml(message)}</div>
                 <div class="commit-author"><span>${escapeHtml(commit.author)}</span></div>
               </div>
@@ -367,14 +528,52 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
     `      <div class="file-history-commits">${commitsHTML}</div>`,
     '    </div>',
     '    <div class="file-history-sidebar">',
-    `      <div id="ai-analysis-container" class="file-history-ai-analysis">${aiPanel}</div>`,
+    '      <div class="sidebar-tabs">',
+    '        <button class="sidebar-tab active" data-tab="history">History Analysis</button>',
+    '        <button class="sidebar-tab" data-tab="compare">Version Compare</button>',
+    '      </div>',
+    '      <div class="sidebar-content">',
+    '        <div id="history-tab" class="tab-content active">',
+    `          <div id="ai-analysis-container" class="file-history-ai-analysis">${aiPanel}</div>`,
+    '        </div>',
+    '        <div id="compare-tab" class="tab-content" style="display: none;">',
+    '          <div class="compare-controls">',
+    '            <h4>',
+    '              <svg class="compare-icon" viewBox="0 0 16 16">',
+    '                <path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>',
+    '                <path d="M4 8h8M8 4v8"/>',
+    '              </svg>',
+    '              Version Comparison',
+    '            </h4>',
+    '            <div class="compare-info">Click on commits to select FROM and TO versions for comparison.</div>',
+    '            <div class="compare-selection empty" id="from-selection">',
+    '              <span class="compare-selection-label">From (older):</span>',
+    '              <span>No version selected</span>',
+    '            </div>',
+    '            <div class="compare-selection empty" id="to-selection">',
+    '              <span class="compare-selection-label">To (newer):</span>',
+    '              <span>No version selected</span>',
+    '            </div>',
+    '            <div class="compare-buttons">',
+    '              <button class="compare-btn" id="compare-versions" disabled>Compare Versions</button>',
+    '              <button class="compare-btn clear-btn" id="clear-selection">Clear</button>',
+    '            </div>',
+    '          </div>',
+    `          <div id="comparison-analysis-container" class="file-history-ai-analysis">${comparisonAIPanel}</div>`,
+    '        </div>',
+    '      </div>',
     '    </div>',
     '  </div>',
     '</div>',
-    // Add JavaScript for webview message handling
+    // Add JavaScript for webview message handling and version comparison
     options.isWebView && options.nonce ? `
       <script nonce="${options.nonce}">
         (function() {
+          // Version comparison state
+          let compareFromHash = null;
+          let compareToHash = null;
+          let isCompareMode = false;
+
           // Escape HTML helper function
           function escapeHtml(text) {
             const div = document.createElement('div');
@@ -385,12 +584,60 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
           // Handle messages from the extension
           window.addEventListener('message', function(event) {
             const message = event.data;
+            console.log('[File History] Received message:', message);
             
             if (message.command === 'updateAIAnalysis' && message.analysis) {
               console.log('[File History] Received AI analysis update:', message.analysis);
               updateAIAnalysis(message.analysis);
+            } else if (message.command === 'updateFileVersionComparisonAIAnalysis' && message.analysis) {
+              console.log('[File History] Received file version comparison AI analysis update:', message.analysis);
+              updateComparisonAIAnalysis(message.analysis);
+            } else if (message.command === 'fileHistoryComparison') {
+              console.log('[File History] Received file comparison response:', message);
+              handleComparisonResponse(message);
             }
           });
+
+          // Handle comparison response
+          function handleComparisonResponse(response) {
+            if (response.error) {
+              const container = document.getElementById('comparison-analysis-container');
+              container.innerHTML = \`<div class="ai-analysis-loading">❌ Error: \${escapeHtml(response.error)}</div>\`;
+              return;
+            }
+
+            // Check AI analysis status
+            if (response.aiAnalysisStatus === 'completed' && response.aiAnalysis) {
+              // AI analysis is immediately available
+              updateComparisonAIAnalysis(response.aiAnalysis);
+            } else if (response.aiAnalysisStatus === 'pending' || !response.aiAnalysis) {
+              // AI analysis is in progress or not yet available
+              const container = document.getElementById('comparison-analysis-container');
+              container.innerHTML = \`
+                <div class="ai-analysis-loading">
+                  🔄 AI is analyzing the version differences...<br>
+                  <small style="color: var(--desc); margin-top: 8px; display: block;">
+                    This may take a few seconds. Results will appear automatically.
+                  </small>
+                </div>
+              \`;
+            } else if (response.aiAnalysisStatus === 'failed') {
+              // AI analysis failed
+              const container = document.getElementById('comparison-analysis-container');
+              container.innerHTML = \`
+                <div class="ai-analysis-loading">
+                  ⚠️ AI analysis failed for this comparison.<br>
+                  <small style="color: var(--desc); margin-top: 8px; display: block;">
+                    Basic comparison data is available, but AI insights are not.
+                  </small>
+                </div>
+              \`;
+            } else {
+              // Fallback for unknown status
+              const container = document.getElementById('comparison-analysis-container');
+              container.innerHTML = '<div class="ai-analysis-loading">⏳ Comparison completed. Processing AI analysis...</div>';
+            }
+          }
 
           // Function to update AI analysis content
           function updateAIAnalysis(analysis) {
@@ -435,9 +682,249 @@ export function generateFileHistoryHTML(options: FileHistoryTemplateOptions): st
             console.log('[File History] Successfully updated AI analysis');
           }
 
+          // Function to update comparison AI analysis content
+          function updateComparisonAIAnalysis(analysis) {
+            const container = document.getElementById('comparison-analysis-container');
+            if (!container) {
+              console.error('[File History] Comparison analysis container not found');
+              return;
+            }
+
+            // Generate new comparison AI analysis HTML
+            const comparisonHTML = \`
+              <div class="ai-analysis-header">
+                <svg class="ai-analysis-icon" viewBox="0 0 16 16">
+                  <path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
+                  <path d="M4 8h8M8 4v8"/>
+                </svg>
+                <h3>版本比较分析</h3>
+              </div>
+              <div class="ai-analysis-section">
+                <h4>📋 变更总结</h4>
+                <div class="ai-analysis-content">\${escapeHtml(analysis.summary || '暂无总结')}</div>
+              </div>
+              <div class="ai-analysis-section">
+                <h4>🔄 变更类型</h4>
+                <div class="ai-analysis-content">\${escapeHtml(analysis.changeType || '暂无分类')}</div>
+              </div>
+              <div class="ai-analysis-section">
+                <h4>💥 影响分析</h4>
+                <div class="ai-analysis-content">\${escapeHtml(analysis.impactAnalysis || '暂无分析')}</div>
+              </div>
+              <div class="ai-analysis-section">
+                <h4>🔑 核心修改</h4>
+                <ul class="ai-analysis-list">
+                  \${(analysis.keyModifications || []).map(mod => \`<li>\${escapeHtml(mod)}</li>\`).join('')}
+                </ul>
+              </div>
+              <div class="ai-analysis-section">
+                <h4>💡 建议</h4>
+                <ul class="ai-analysis-list">
+                  \${(analysis.recommendations || []).map(rec => \`<li>\${escapeHtml(rec)}</li>\`).join('')}
+                </ul>
+              </div>
+            \`;
+
+            container.innerHTML = comparisonHTML;
+            console.log('[File History] Successfully updated comparison AI analysis');
+          }
+
+          // Tab switching functionality
+          document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('sidebar-tab')) {
+              const tabName = event.target.getAttribute('data-tab');
+              switchTab(tabName);
+            }
+          });
+
+          function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.sidebar-tab').forEach(tab => {
+              tab.classList.remove('active');
+            });
+            document.querySelector(\`[data-tab="\${tabName}"]\`).classList.add('active');
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+              content.style.display = 'none';
+              content.classList.remove('active');
+            });
+            const targetTab = document.getElementById(\`\${tabName}-tab\`);
+            if (targetTab) {
+              targetTab.style.display = 'block';
+              targetTab.classList.add('active');
+            }
+
+            // Toggle compare mode
+            isCompareMode = (tabName === 'compare');
+            updateCommitSelectionMode();
+          }
+
+          function updateCommitSelectionMode() {
+            const commits = document.querySelectorAll('.file-history-commit');
+            commits.forEach(commit => {
+              if (isCompareMode) {
+                commit.style.cursor = 'pointer';
+              } else {
+                commit.classList.remove('compare-from', 'compare-to');
+                // Hide badges
+                const badges = commit.querySelectorAll('.commit-compare-badge');
+                badges.forEach(badge => badge.style.display = 'none');
+              }
+            });
+
+            if (!isCompareMode) {
+              clearSelection();
+            }
+          }
+
+          // Commit selection for comparison
+          document.addEventListener('click', function(event) {
+            const commitElement = event.target.closest('.file-history-commit');
+            if (commitElement && isCompareMode) {
+              const hash = commitElement.getAttribute('data-hash');
+              selectCommitForComparison(commitElement, hash);
+            }
+          });
+
+          function selectCommitForComparison(commitElement, hash) {
+            if (!compareFromHash) {
+              // Select as FROM version
+              compareFromHash = hash;
+              updateSelectionDisplay();
+              highlightCommits();
+            } else if (!compareToHash && hash !== compareFromHash) {
+              // Select as TO version
+              compareToHash = hash;
+              updateSelectionDisplay();
+              highlightCommits();
+            } else if (hash === compareFromHash) {
+              // Deselect FROM
+              compareFromHash = compareToHash;
+              compareToHash = null;
+              updateSelectionDisplay();
+              highlightCommits();
+            } else if (hash === compareToHash) {
+              // Deselect TO
+              compareToHash = null;
+              updateSelectionDisplay();
+              highlightCommits();
+            } else {
+              // Replace TO with new selection
+              compareToHash = hash;
+              updateSelectionDisplay();
+              highlightCommits();
+            }
+          }
+
+          function updateSelectionDisplay() {
+            const fromSelection = document.getElementById('from-selection');
+            const toSelection = document.getElementById('to-selection');
+            const compareBtn = document.getElementById('compare-versions');
+
+            if (compareFromHash) {
+              const fromCommit = document.querySelector(\`[data-hash="\${compareFromHash}"]\`);
+              const fromHash = compareFromHash.substring(0, 8);
+              const fromMessage = fromCommit ? fromCommit.querySelector('.commit-message').textContent : 'Unknown';
+              fromSelection.innerHTML = \`
+                <span class="compare-selection-label">From (older):</span>
+                <span>\${fromHash} - \${fromMessage}</span>
+              \`;
+              fromSelection.classList.remove('empty');
+              fromSelection.classList.add('selected');
+            } else {
+              fromSelection.innerHTML = \`
+                <span class="compare-selection-label">From (older):</span>
+                <span>No version selected</span>
+              \`;
+              fromSelection.classList.add('empty');
+              fromSelection.classList.remove('selected');
+            }
+
+            if (compareToHash) {
+              const toCommit = document.querySelector(\`[data-hash="\${compareToHash}"]\`);
+              const toHash = compareToHash.substring(0, 8);
+              const toMessage = toCommit ? toCommit.querySelector('.commit-message').textContent : 'Unknown';
+              toSelection.innerHTML = \`
+                <span class="compare-selection-label">To (newer):</span>
+                <span>\${toHash} - \${toMessage}</span>
+              \`;
+              toSelection.classList.remove('empty');
+              toSelection.classList.add('selected');
+            } else {
+              toSelection.innerHTML = \`
+                <span class="compare-selection-label">To (newer):</span>
+                <span>No version selected</span>
+              \`;
+              toSelection.classList.add('empty');
+              toSelection.classList.remove('selected');
+            }
+
+            // Enable/disable compare button
+            compareBtn.disabled = !(compareFromHash && compareToHash);
+          }
+
+          function highlightCommits() {
+            const commits = document.querySelectorAll('.file-history-commit');
+            commits.forEach(commit => {
+              const hash = commit.getAttribute('data-hash');
+              const fromBadge = commit.querySelector('.commit-compare-badge.from');
+              const toBadge = commit.querySelector('.commit-compare-badge.to');
+              
+              commit.classList.remove('compare-from', 'compare-to');
+              fromBadge.style.display = 'none';
+              toBadge.style.display = 'none';
+
+              if (hash === compareFromHash) {
+                commit.classList.add('compare-from');
+                fromBadge.style.display = 'inline-block';
+              }
+              if (hash === compareToHash) {
+                commit.classList.add('compare-to');
+                toBadge.style.display = 'inline-block';
+              }
+            });
+          }
+
+          function clearSelection() {
+            compareFromHash = null;
+            compareToHash = null;
+            updateSelectionDisplay();
+            highlightCommits();
+            
+            // Clear comparison analysis
+            const container = document.getElementById('comparison-analysis-container');
+            if (container) {
+              container.innerHTML = '<div class="ai-analysis-loading">Select two versions to compare and analyze differences...</div>';
+            }
+          }
+
+          // Compare versions functionality
+          document.getElementById('compare-versions').addEventListener('click', function() {
+            if (compareFromHash && compareToHash) {
+              // Show loading state
+              const container = document.getElementById('comparison-analysis-container');
+              container.innerHTML = '<div class="ai-analysis-loading">Analyzing version differences...</div>';
+              
+              // Send comparison request to extension
+              vscode.postMessage({
+                command: 'fileHistoryComparison',
+                repo: '${escapeHtml(options.repo || '')}', // Use repo from options
+                filePath: '${escapeHtml(options.filePath)}',
+                fromHash: compareFromHash,
+                toHash: compareToHash
+              });
+            }
+          });
+
+          // Clear selection functionality
+          document.getElementById('clear-selection').addEventListener('click', function() {
+            clearSelection();
+          });
+
           // VS Code API for webview communication
           const vscode = acquireVsCodeApi();
-          console.log('[File History] File history webview initialized');
+          console.log('[File History] File history webview initialized with version comparison support');
         })();
       </script>
     ` : '',

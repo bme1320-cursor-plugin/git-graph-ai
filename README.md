@@ -14,6 +14,8 @@ View a Git Graph of your repository, and easily perform Git actions from the gra
     * **AI-Enhanced Analysis** (NEW):
         * **Comprehensive Commit Analysis**: Get intelligent summaries of commit changes that focus on overall purpose, technical impact, and business value rather than individual file details
         * **Smart Version Comparison**: Receive integrated analysis of changes between any two commits, highlighting evolution patterns and architectural improvements
+        * **File History Analysis**: View detailed evolution patterns and AI-powered insights for individual files across their version history
+        * **File Version Comparison**: Compare any two versions of a single file with AI analysis highlighting key differences, change types, impact analysis, and recommendations
         * **Configurable File Type Support**: Customize which file types are analyzed by AI (supports common programming languages and text files)
         * **Performance Optimized**: Intelligent batching and concurrent processing to minimize analysis time
     * Perform Git Actions (available by right clicking on a commit / branch / tag):
