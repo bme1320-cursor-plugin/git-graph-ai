@@ -35,9 +35,7 @@
 	"extensionKind": [
 		"workspace"
 	],
-	"activationEvents": [
-		"*"
-	],
+
 	"main": "./out/extension.js",
 	"contributes": {
 		"commands": [

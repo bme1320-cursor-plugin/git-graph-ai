@@ -86,6 +86,16 @@ export class GitGraphView extends Disposable {
 		this.logger = logger;
 		this.loadViewTo = loadViewTo;
 
+		// Set up AI analysis update callback
+		this.dataSource.setAIAnalysisUpdateCallback((commitHash, compareWithHash, aiAnalysis) => {
+			this.sendMessage({
+				command: 'aiAnalysisUpdate',
+				commitHash: commitHash,
+				compareWithHash: compareWithHash,
+				aiAnalysis: aiAnalysis
+			});
+		});
+
 		const config = getConfig();
 		this.panel = vscode.window.createWebviewPanel('git-graph', 'Git Graph', column || vscode.ViewColumn.One, {
 			enableScripts: true,
@@ -255,7 +265,7 @@ export class GitGraphView extends Disposable {
 				});
 				break;
 			case 'compareCommits':
-				const comparisonData = await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash) as GitCommitComparisonData;
+				const comparisonData = await this.dataSource.getCommitComparison(msg.repo, msg.fromHash, msg.toHash, msg.commitHash, msg.compareWithHash) as GitCommitComparisonData;
 				this.sendMessage({
 					command: 'compareCommits',
 					commitHash: msg.commitHash,

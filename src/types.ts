@@ -1256,6 +1256,13 @@ export interface ResponseViewScm extends ResponseWithErrorInfo {
 	readonly command: 'viewScm';
 }
 
+export interface ResponseAIAnalysisUpdate extends BaseMessage {
+	readonly command: 'aiAnalysisUpdate';
+	readonly commitHash: string;
+	readonly compareWithHash: string | null;
+	readonly aiAnalysis: AIAnalysis | null;
+}
+
 export type RequestMessage =
 	RequestAddRemote
 	| RequestAddTag
@@ -1379,7 +1386,8 @@ export type ResponseMessage =
 	| ResponseViewDiff
 	| ResponseViewDiffWithWorkingFile
 	| ResponseViewFileAtRevision
-	| ResponseViewScm;
+	| ResponseViewScm
+	| ResponseAIAnalysisUpdate;
 
 
 /** Helper Types */

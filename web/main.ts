@@ -3356,6 +3356,26 @@ class GitGraphView {
 		alterClass(btnElem, CLASS_ACTIVE, active);
 		btnElem.title = (active ? 'End' : 'Start') + ' Code Review';
 	}
+
+	/**
+	 * Update AI analysis for the currently expanded commit
+	 * @param commitHash The commit hash
+	 * @param compareWithHash The commit hash to compare with (optional)
+	 * @param aiAnalysis The AI analysis result
+	 */
+	public updateAIAnalysis(commitHash: string, compareWithHash: string | null, aiAnalysis: AIAnalysis | null) {
+		// Check if this update is for the currently expanded commit
+		if (this.expandedCommit !== null &&
+			this.expandedCommit.commitHash === commitHash &&
+			this.expandedCommit.compareWithHash === compareWithHash) {
+
+			// Update the AI analysis
+			this.expandedCommit.aiAnalysis = aiAnalysis;
+
+			// Re-render the commit details view to show the updated AI analysis
+			this.renderCommitDetailsView(false);
+		}
+	}
 }
 
 
@@ -3599,6 +3619,9 @@ window.addEventListener('load', () => {
 				break;
 			case 'viewScm':
 				finishOrDisplayError(msg.error, 'Unable to open the Source Control View');
+				break;
+			case 'aiAnalysisUpdate':
+				gitGraph.updateAIAnalysis(msg.commitHash, msg.compareWithHash, msg.aiAnalysis);
 				break;
 		}
 	});

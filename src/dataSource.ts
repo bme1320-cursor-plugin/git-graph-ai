@@ -46,10 +46,12 @@ export class DataSource extends Disposable {
 	private gitFormatCommitDetails!: string;
 	private gitFormatLog!: string;
 	private gitFormatStash!: string;
+	private aiAnalysisUpdateCallback?: (commitHash: string, compareWithHash: string | null, aiAnalysis: any) => void;
 
 	/**
-	 * Creates the Git Graph Data Source.
+	 * Creates a DataSource instance.
 	 * @param gitExecutable The Git executable available to Git Graph at startup.
+	 * @param onDidChangeConfiguration The Event emitting when the configuration changes.
 	 * @param onDidChangeGitExecutable The Event emitting the Git executable for Git Graph to use.
 	 * @param logger The Git Graph Logger instance.
 	 */
@@ -355,80 +357,117 @@ export class DataSource extends Disposable {
 			const commitDetailsBase = results[0];
 			commitDetailsBase.fileChanges = generateFileChanges(results[1], results[2], null);
 
+			// 立即返回基本的commit details，不等待AI分析
+			const basicResult = { commitDetails: commitDetailsBase, error: null };
+
 			// 获取AI分析配置
 			const config = getConfig();
 			const aiConfig = config.aiAnalysis;
 
-			// 增强的AI分析：生成综合分析报告
-			let overallAnalysis = null;
+			// 异步执行AI分析，不阻塞基本信息的返回
 			if (aiConfig.enabled) {
-				const eligibleFiles = commitDetailsBase.fileChanges
-					.filter(fileChange => this.isFileEligibleForAIAnalysis(fileChange, aiConfig))
-					.slice(0, aiConfig.maxFilesPerAnalysis);
-
-				if (eligibleFiles.length > 0) {
-					// 收集所有文件的差异内容
-					const fileAnalysisData = await Promise.all(
-						eligibleFiles.map(async (fileChange) => {
-							try {
-								const [contentBefore, contentAfter, diffContent] = await Promise.all([
-									this.getCommitFile(repo, fromCommit, fileChange.oldFilePath).catch(() => null),
-									this.getCommitFile(repo, commitHash, fileChange.newFilePath).catch(() => null),
-									this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath)
-								]);
-
-								if (diffContent && diffContent.trim() !== '') {
-									return {
-										filePath: fileChange.newFilePath,
-										diffContent: diffContent,
-										contentBefore: contentBefore,
-										contentAfter: contentAfter,
-										type: fileChange.type
-									};
-								}
-							} catch (error) {
-								this.logger.logError(`Failed to get content/diff for ${fileChange.newFilePath}: ${error}`);
-							}
-							return null;
-						})
-					);
-
-					const validFileData = fileAnalysisData.filter((data): data is {
-						filePath: string;
-						diffContent: string;
-						contentBefore: string | null;
-						contentAfter: string | null;
-						type: GitFileStatus;
-					} => data !== null);
-
-					if (validFileData.length > 0) {
-						// 使用AI服务进行综合分析
-						const analysis = await this.generateComprehensiveCommitAnalysis(
-							commitDetailsBase,
-							validFileData,
-							this.logger
-						);
-
-						if (analysis) {
-							overallAnalysis = analysis;
-						}
-					}
-				}
-
-				// 如果没有AI分析结果，提供基础统计信息
-				if (!overallAnalysis) {
-					const stats = this.generateCommitStats(commitDetailsBase.fileChanges);
-					overallAnalysis = {
-						summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
-					};
-				}
+				this.performAsyncCommitAnalysis(repo, commitHash, commitDetailsBase, fromCommit, aiConfig)
+					.catch(error => {
+						this.logger.logError(`Async AI analysis failed for commit ${commitHash}: ${error}`);
+					});
 			}
 
-			commitDetailsBase.aiAnalysis = overallAnalysis;
-			return { commitDetails: commitDetailsBase, error: null };
+			return basicResult;
 		}).catch((errorMessage) => {
 			return { commitDetails: null, error: errorMessage };
 		});
+	}
+
+	/**
+	 * Perform AI analysis asynchronously and send update when complete
+	 */
+	private async performAsyncCommitAnalysis(
+		repo: string,
+		commitHash: string,
+		commitDetails: any,
+		fromCommit: string,
+		aiConfig: any
+	): Promise<void> {
+		try {
+			const eligibleFiles = commitDetails.fileChanges
+				.filter((fileChange: any) => this.isFileEligibleForAIAnalysis(fileChange, aiConfig))
+				.slice(0, aiConfig.maxFilesPerAnalysis);
+
+			if (eligibleFiles.length === 0) {
+				// 如果没有符合条件的文件，提供基础统计信息
+				const stats = this.generateCommitStats(commitDetails.fileChanges);
+				const basicAnalysis = {
+					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
+				};
+
+				// 发送AI分析更新消息
+				this.sendAIAnalysisUpdate(commitHash, null, basicAnalysis);
+				return;
+			}
+
+			// 收集所有文件的差异内容
+			const fileAnalysisData = await Promise.all(
+				eligibleFiles.map(async (fileChange: any) => {
+					try {
+						const [contentBefore, contentAfter, diffContent] = await Promise.all([
+							this.getCommitFile(repo, fromCommit, fileChange.oldFilePath).catch(() => null),
+							this.getCommitFile(repo, commitHash, fileChange.newFilePath).catch(() => null),
+							this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath)
+						]);
+
+						if (diffContent && diffContent.trim() !== '') {
+							return {
+								filePath: fileChange.newFilePath,
+								diffContent: diffContent,
+								contentBefore: contentBefore,
+								contentAfter: contentAfter,
+								type: fileChange.type
+							};
+						}
+					} catch (error) {
+						this.logger.logError(`Failed to get content/diff for ${fileChange.newFilePath}: ${error}`);
+					}
+					return null;
+				})
+			);
+
+			const validFileData = fileAnalysisData.filter((data): data is {
+				filePath: string;
+				diffContent: string;
+				contentBefore: string | null;
+				contentAfter: string | null;
+				type: any;
+			} => data !== null);
+
+			let overallAnalysis = null;
+			if (validFileData.length > 0) {
+				// 使用AI服务进行综合分析
+				overallAnalysis = await this.generateComprehensiveCommitAnalysis(
+					commitDetails,
+					validFileData,
+					this.logger
+				);
+			}
+
+			// 如果没有AI分析结果，提供基础统计信息
+			if (!overallAnalysis) {
+				const stats = this.generateCommitStats(commitDetails.fileChanges);
+				overallAnalysis = {
+					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
+				};
+			}
+
+			// 发送AI分析更新消息
+			this.sendAIAnalysisUpdate(commitHash, null, overallAnalysis);
+
+		} catch (error) {
+			this.logger.logError(`AI analysis failed for commit ${commitHash}: ${error}`);
+			// 发送错误状态的AI分析
+			const errorAnalysis = {
+				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
+			};
+			this.sendAIAnalysisUpdate(commitHash, null, errorAnalysis);
+		}
 	}
 
 	/**
@@ -517,7 +556,7 @@ export class DataSource extends Disposable {
 	 * @param toHash The commit hash the comparison is to.
 	 * @returns The comparison details.
 	 */
-	public getCommitComparison(repo: string, fromHash: string, toHash: string): Promise<GitCommitComparisonData> {
+	public getCommitComparison(repo: string, fromHash: string, toHash: string, originalCommitHash?: string, originalCompareWithHash?: string): Promise<GitCommitComparisonData> {
 		return Promise.all([
 			this.getDiffNameStatus(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
 			this.getDiffNumStat(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash),
@@ -525,83 +564,126 @@ export class DataSource extends Disposable {
 		]).then(async (results: [DiffNameStatusRecord[], DiffNumStatRecord[], GitStatusFiles | null]) => {
 			const fileChanges = generateFileChanges(results[0], results[1], results[2]);
 
+			// 立即返回基本的比较数据，不等待AI分析
+			const basicResult = {
+				fileChanges: fileChanges,
+				aiAnalysis: null,
+				error: null
+			};
+
 			// 获取AI分析配置
 			const config = getConfig();
 			const aiConfig = config.aiAnalysis;
 
-			// 增强的AI分析：生成综合分析报告
-			let overallAnalysis = null;
+			// 异步执行AI分析，不阻塞基本信息的返回
 			if (aiConfig.enabled) {
-				const eligibleFiles = fileChanges
-					.filter(fileChange => this.isFileEligibleForAIAnalysis(fileChange, aiConfig))
-					.slice(0, aiConfig.maxFilesPerAnalysis);
+				// 使用原始的commitHash和compareWithHash，如果没有提供则使用fromHash和toHash
+				const commitHashForUpdate = originalCommitHash || fromHash;
+				const compareWithHashForUpdate = originalCompareWithHash || toHash;
 
-				if (eligibleFiles.length > 0) {
-					// 收集所有文件的差异内容
-					const fileAnalysisData = await Promise.all(
-						eligibleFiles.map(async (fileChange) => {
-							try {
-								const [contentBefore, contentAfter, diffContent] = await Promise.all([
-									this.getCommitFile(repo, fromHash, fileChange.oldFilePath).catch(() => null),
-									this.getCommitFile(repo, toHash === UNCOMMITTED ? 'HEAD' : toHash, fileChange.newFilePath).catch(() => null),
-									this.getDiffBetweenRevisions(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash, fileChange.newFilePath)
-								]);
-
-								if (diffContent && diffContent.trim() !== '') {
-									return {
-										filePath: fileChange.newFilePath,
-										diffContent: diffContent,
-										contentBefore: contentBefore,
-										contentAfter: contentAfter,
-										type: fileChange.type
-									};
-								}
-							} catch (error) {
-								this.logger.logError(`Failed to get content/diff for comparison file ${fileChange.newFilePath}: ${error}`);
-							}
-							return null;
-						})
-					);
-
-					const validFileData = fileAnalysisData.filter((data): data is {
-						filePath: string;
-						diffContent: string;
-						contentBefore: string | null;
-						contentAfter: string | null;
-						type: GitFileStatus;
-					} => data !== null);
-
-					if (validFileData.length > 0) {
-						// 使用AI服务进行综合分析
-						const analysis = await this.generateComprehensiveComparisonAnalysis(
-							fileChanges,
-							validFileData,
-							this.logger
-						);
-
-						if (analysis) {
-							overallAnalysis = analysis;
-						}
-					}
-				}
-
-				// 如果没有AI分析结果，提供基础统计信息
-				if (!overallAnalysis) {
-					const stats = this.generateComparisonStats(fileChanges);
-					overallAnalysis = {
-						summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
-					};
-				}
+				this.performAsyncComparisonAnalysis(repo, fromHash, toHash, fileChanges, aiConfig, commitHashForUpdate, compareWithHashForUpdate)
+					.catch(error => {
+						this.logger.logError(`Async AI comparison analysis failed for ${fromHash}..${toHash}: ${error}`);
+					});
 			}
 
-			return {
-				fileChanges: fileChanges,
-				aiAnalysis: overallAnalysis,
-				error: null
-			};
-		}).catch((errorMessage) => {
-			return { fileChanges: [], aiAnalysis: null, error: errorMessage };
+			return basicResult;
+		}).catch((error) => {
+			return { fileChanges: [], aiAnalysis: null, error: error };
 		});
+	}
+
+	/**
+	 * Perform AI comparison analysis asynchronously and send update when complete
+	 */
+	private async performAsyncComparisonAnalysis(
+		repo: string,
+		fromHash: string,
+		toHash: string,
+		fileChanges: GitFileChange[],
+		aiConfig: any,
+		originalCommitHash: string,
+		originalCompareWithHash: string
+	): Promise<void> {
+		try {
+			// 获取符合AI分析条件的文件
+			const eligibleFiles = fileChanges.filter(file => this.isFileEligibleForAIAnalysis(file, aiConfig));
+
+			if (eligibleFiles.length === 0) {
+				// 如果没有符合条件的文件，提供基础统计信息
+				const stats = this.generateComparisonStats(fileChanges);
+				const basicAnalysis = {
+					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
+				};
+
+				// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, basicAnalysis);
+				return;
+			}
+
+			// 收集所有文件的差异内容
+			const fileAnalysisData = await Promise.all(
+				eligibleFiles.map(async (fileChange) => {
+					try {
+						const [contentBefore, contentAfter, diffContent] = await Promise.all([
+							this.getCommitFile(repo, fromHash, fileChange.oldFilePath).catch(() => null),
+							this.getCommitFile(repo, toHash === UNCOMMITTED ? 'HEAD' : toHash, fileChange.newFilePath).catch(() => null),
+							this.getDiffBetweenRevisions(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash, fileChange.newFilePath)
+						]);
+
+						if (diffContent && diffContent.trim() !== '') {
+							return {
+								filePath: fileChange.newFilePath,
+								diffContent: diffContent,
+								contentBefore: contentBefore,
+								contentAfter: contentAfter,
+								type: fileChange.type
+							};
+						}
+					} catch (error) {
+						this.logger.logError(`Failed to get content/diff for comparison file ${fileChange.newFilePath}: ${error}`);
+					}
+					return null;
+				})
+			);
+
+			const validFileData = fileAnalysisData.filter((data): data is {
+				filePath: string;
+				diffContent: string;
+				contentBefore: string | null;
+				contentAfter: string | null;
+				type: any;
+			} => data !== null);
+
+			let overallAnalysis = null;
+			if (validFileData.length > 0) {
+				// 使用AI服务进行综合分析
+				overallAnalysis = await this.generateComprehensiveComparisonAnalysis(
+					fileChanges,
+					validFileData,
+					this.logger
+				);
+			}
+
+			// 如果没有AI分析结果，提供基础统计信息
+			if (!overallAnalysis) {
+				const stats = this.generateComparisonStats(fileChanges);
+				overallAnalysis = {
+					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
+				};
+			}
+
+			// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
+			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, overallAnalysis);
+
+		} catch (error) {
+			this.logger.logError(`AI comparison analysis failed for ${fromHash}..${toHash}: ${error}`);
+			// 发送错误状态的AI分析 - 使用原始的commitHash和compareWithHash
+			const errorAnalysis = {
+				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
+			};
+			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, errorAnalysis);
+		}
 	}
 
 	/**
@@ -614,12 +696,12 @@ export class DataSource extends Disposable {
 	private async generateComprehensiveCommitAnalysis(
 		commitDetails: any,
 		fileAnalysisData: Array<{
-			filePath: string;
-			diffContent: string;
-			contentBefore: string | null;
-			contentAfter: string | null;
-			type: GitFileStatus;
-		}>,
+				filePath: string;
+				diffContent: string;
+				contentBefore: string | null;
+				contentAfter: string | null;
+				type: GitFileStatus;
+			}>,
 		logger: Logger
 	): Promise<{ summary: string } | null> {
 		try {
@@ -2273,6 +2355,26 @@ ${index + 1}. 文件: ${fileData.filePath}
 
 		// 检查是否在支持列表中
 		return aiConfig.supportedFileExtensions.some((ext: string) => filePath.endsWith(ext.toLowerCase()));
+	}
+
+	/**
+	 * Set the callback for AI analysis updates
+	 * @param callback The callback function to call when AI analysis is complete
+	 */
+	public setAIAnalysisUpdateCallback(callback: (commitHash: string, compareWithHash: string | null, aiAnalysis: any) => void) {
+		this.aiAnalysisUpdateCallback = callback;
+	}
+
+	/**
+	 * Send AI analysis update to the callback
+	 * @param commitHash The commit hash
+	 * @param compareWithHash The commit hash to compare with (optional)
+	 * @param aiAnalysis The AI analysis result
+	 */
+	private sendAIAnalysisUpdate(commitHash: string, compareWithHash: string | null, aiAnalysis: any) {
+		if (this.aiAnalysisUpdateCallback) {
+			this.aiAnalysisUpdateCallback(commitHash, compareWithHash, aiAnalysis);
+		}
 	}
 }
 
