@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { AskpassEnvironment, AskpassManager } from './askpass/askpassManager';
 import { getConfig } from './config';
 import { Logger } from './logger';
-import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionPrefix, GitCommit, GitCommitDetails, GitCommitStash, GitConfigLocation, GitFileChange, GitFileStatus, GitPushBranchMode, GitRepoConfig, GitRepoConfigBranches, GitResetMode, GitSignature, GitSignatureStatus, GitStash, GitTagDetails, MergeActionOn, RebaseActionOn, SquashMessageFormat, TagType, Writeable } from './types';
+import { CommitOrdering, DateType, DeepWriteable, ErrorInfo, ErrorInfoExtensionPrefix, FileHistoryAIAnalysis, GitCommit, GitCommitDetails, GitCommitStash, GitConfigLocation, GitFileChange, GitFileHistoryCommit, GitFileHistoryData, GitFileStatus, GitPushBranchMode, GitRepoConfig, GitRepoConfigBranches, GitResetMode, GitSignature, GitSignatureStatus, GitStash, GitTagDetails, MergeActionOn, RebaseActionOn, SquashMessageFormat, TagType, Writeable } from './types';
 import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, abbrevCommit, constructIncompatibleGitVersionMessage, doesVersionMeetRequirement, getPathFromStr, getPathFromUri, openGitTerminal, pathWithTrailingSlash, realpath, resolveSpawnOutput, showErrorMessage } from './utils';
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
@@ -2374,6 +2374,310 @@ ${index + 1}. 文件: ${fileData.filePath}
 	private sendAIAnalysisUpdate(commitHash: string, compareWithHash: string | null, aiAnalysis: any) {
 		if (this.aiAnalysisUpdateCallback) {
 			this.aiAnalysisUpdateCallback(commitHash, compareWithHash, aiAnalysis);
+		}
+	}
+
+	/**
+	 * Get the commit history for a specific file
+	 * @param repo The path of the repository
+	 * @param filePath The path of the file relative to the repository root
+	 * @param maxCommits The maximum number of commits to return
+	 * @returns The file history data
+	 */
+	public async getFileHistory(repo: string, filePath: string, maxCommits: number): Promise<GitFileHistoryData> {
+		try {
+			// Get the commit history for the file
+			const commits = await this.getFileCommitHistory(repo, filePath, maxCommits);
+
+			// 立即返回基本的文件历史数据，不等待AI分析
+			const basicResult = {
+				filePath: filePath,
+				commits: commits,
+				aiAnalysis: null,
+				error: null
+			};
+
+			// 获取AI分析配置
+			const config = getConfig();
+			const aiConfig = config.aiAnalysis;
+
+			// 异步执行AI分析，不阻塞基本信息的返回
+			if (aiConfig.enabled && commits.length > 0) {
+				this.performAsyncFileHistoryAnalysis(filePath, commits)
+					.catch(error => {
+						this.logger.logError(`Async file history AI analysis failed for ${filePath}: ${error}`);
+					});
+			}
+
+			return basicResult;
+		} catch (error) {
+			return {
+				filePath: filePath,
+				commits: [],
+				aiAnalysis: null,
+				error: typeof error === 'string' ? error : 'Failed to get file history'
+			};
+		}
+	}
+
+	/**
+	 * Get the commit history for a specific file
+	 * @param repo The path of the repository
+	 * @param filePath The path of the file
+	 * @param maxCommits The maximum number of commits to return
+	 * @returns Array of file history commits
+	 */
+	private async getFileCommitHistory(repo: string, filePath: string, maxCommits: number): Promise<GitFileHistoryCommit[]> {
+		// Get commit hashes that modified this file
+		const commitHashes = await this.spawnGit([
+			'log',
+			'--follow',
+			'--format=%H',
+			`--max-count=${maxCommits}`,
+			'--',
+			filePath
+		], repo, (stdout) => {
+			return stdout.trim().split('\n').filter(hash => hash.length > 0);
+		});
+
+		if (commitHashes.length === 0) {
+			return [];
+		}
+
+		// Get detailed information for each commit
+		const commits: GitFileHistoryCommit[] = [];
+
+		for (const hash of commitHashes) {
+			try {
+				// Get commit details
+				const commitDetails = await this.getCommitDetailsBase(repo, hash);
+
+				// Get file change information for this commit
+				const fileChange = await this.getFileChangeInCommit(repo, hash, filePath);
+
+				if (fileChange) {
+					commits.push({
+						hash: commitDetails.hash,
+						parents: commitDetails.parents,
+						author: commitDetails.author,
+						authorEmail: commitDetails.authorEmail,
+						authorDate: commitDetails.authorDate,
+						committer: commitDetails.committer,
+						committerEmail: commitDetails.committerEmail,
+						committerDate: commitDetails.committerDate,
+						message: commitDetails.body,
+						fileChange: fileChange,
+						additions: fileChange.additions,
+						deletions: fileChange.deletions
+					});
+				}
+			} catch (error) {
+				this.logger.logError(`Failed to get details for commit ${hash}: ${error}`);
+			}
+		}
+
+		return commits;
+	}
+
+	/**
+	 * Get file change information for a specific file in a commit
+	 * @param repo The path of the repository
+	 * @param commitHash The commit hash
+	 * @param filePath The file path
+	 * @returns The file change information
+	 */
+	private async getFileChangeInCommit(repo: string, commitHash: string, filePath: string): Promise<GitFileChange | null> {
+		try {
+			const fromCommit = commitHash + '^';
+
+			// Get name status and num stat for this specific file
+			const [nameStatusRecords, numStatRecords] = await Promise.all([
+				this.getDiffNameStatus(repo, fromCommit, commitHash).then(records =>
+					records.filter(record =>
+						record.newFilePath === filePath || record.oldFilePath === filePath
+					)
+				),
+				this.getDiffNumStat(repo, fromCommit, commitHash).then(records =>
+					records.filter(record => record.filePath === filePath)
+				)
+			]);
+
+			if (nameStatusRecords.length === 0) {
+				// This might be the initial commit, check if file was added
+				const initialFileCheck = await this.getDiffNameStatus(repo, '', commitHash).then(records =>
+					records.filter(record => record.newFilePath === filePath)
+				);
+
+				if (initialFileCheck.length > 0) {
+					const numStatForInitial = await this.getDiffNumStat(repo, '', commitHash).then(records =>
+						records.filter(record => record.filePath === filePath)
+					);
+
+					return {
+						oldFilePath: initialFileCheck[0].oldFilePath,
+						newFilePath: initialFileCheck[0].newFilePath,
+						type: initialFileCheck[0].type,
+						additions: numStatForInitial.length > 0 ? numStatForInitial[0].additions : null,
+						deletions: numStatForInitial.length > 0 ? numStatForInitial[0].deletions : null
+					};
+				}
+				return null;
+			}
+
+			const nameStatus = nameStatusRecords[0];
+			const numStat = numStatRecords.length > 0 ? numStatRecords[0] : null;
+
+			return {
+				oldFilePath: nameStatus.oldFilePath,
+				newFilePath: nameStatus.newFilePath,
+				type: nameStatus.type,
+				additions: numStat ? numStat.additions : null,
+				deletions: numStat ? numStat.deletions : null
+			};
+		} catch (error) {
+			this.logger.logError(`Failed to get file change for ${filePath} in commit ${commitHash}: ${error}`);
+			return null;
+		}
+	}
+
+	/**
+	 * Perform AI analysis for file history asynchronously
+	 */
+	private async performAsyncFileHistoryAnalysis(
+		filePath: string,
+		commits: GitFileHistoryCommit[]
+	): Promise<void> {
+		try {
+			// 分析文件演进模式
+			const analysis = await this.generateFileHistoryAnalysis(filePath, commits, this.logger);
+
+			if (analysis) {
+				// 发送文件历史AI分析更新消息
+				this.sendFileHistoryAIAnalysisUpdate(filePath, analysis);
+			}
+		} catch (error) {
+			this.logger.logError(`File history AI analysis failed for ${filePath}: ${error}`);
+		}
+	}
+
+	/**
+	 * Generate comprehensive file history analysis using AI service
+	 */
+	private async generateFileHistoryAnalysis(
+		filePath: string,
+		commits: GitFileHistoryCommit[],
+		logger: Logger
+	): Promise<FileHistoryAIAnalysis | null> {
+		try {
+			// 构建文件历史分析提示
+			const prompt = this.buildFileHistoryAnalysisPrompt(filePath, commits);
+
+			// 使用AI服务进行分析
+			const analysis = await analyzeDiff(
+				'file_history_analysis',
+				prompt,
+				null,
+				null,
+				logger
+			);
+
+			if (analysis && analysis.summary) {
+				// 解析AI分析结果
+				return this.parseFileHistoryAnalysis(analysis.summary);
+			}
+		} catch (error) {
+			logger.logError(`Failed to generate file history analysis: ${error}`);
+		}
+		return null;
+	}
+
+	/**
+	 * Build analysis prompt for file history
+	 */
+	private buildFileHistoryAnalysisPrompt(filePath: string, commits: GitFileHistoryCommit[]): string {
+		const totalCommits = commits.length;
+		const totalAdditions = commits.reduce((sum, commit) => sum + (commit.additions || 0), 0);
+		const totalDeletions = commits.reduce((sum, commit) => sum + (commit.deletions || 0), 0);
+
+		// 获取主要贡献者
+		const authorStats: { [author: string]: number } = {};
+		commits.forEach(commit => {
+			authorStats[commit.author] = (authorStats[commit.author] || 0) + 1;
+		});
+		const topAuthors = Object.entries(authorStats)
+			.sort(([, a], [, b]) => b - a)
+			.slice(0, 3)
+			.map(([author, count]) => `${author} (${count}次提交)`);
+
+		let prompt = `请分析以下文件的历史演进情况：
+
+文件路径: ${filePath}
+总提交次数: ${totalCommits}
+总新增行数: ${totalAdditions}
+总删除行数: ${totalDeletions}
+主要贡献者: ${topAuthors.join(', ')}
+
+最近的提交历史：
+`;
+
+		// 添加最近的几次提交详情
+		commits.slice(0, Math.min(10, commits.length)).forEach((commit, index) => {
+			const date = new Date(commit.authorDate * 1000).toLocaleDateString();
+			const changeType = this.getFileChangeTypeDescription(commit.fileChange.type);
+			prompt += `
+${index + 1}. [${date}] ${commit.author}
+   提交: ${commit.message.split('\n')[0].substring(0, 100)}
+   变更: ${changeType} (+${commit.additions || 0}/-${commit.deletions || 0})
+`;
+		});
+
+		prompt += `
+请提供一个综合性的文件演进分析报告，包括：
+1. 文件演进总结（整体发展趋势和目的）
+2. 演进模式（开发活跃度、变更频率等）
+3. 关键变更点（重要的修改节点）
+4. 优化建议（基于历史模式的改进建议）
+
+要求：
+- 使用中文回答
+- 重点关注文件的演进趋势和开发模式
+- 控制在200字以内
+- 使用结构化的JSON格式回答，包含summary、evolutionPattern、keyChanges、recommendations四个字段`;
+
+		return prompt;
+	}
+
+	/**
+	 * Parse file history analysis result
+	 */
+	private parseFileHistoryAnalysis(analysisText: string): FileHistoryAIAnalysis {
+		try {
+			// 尝试解析JSON格式的分析结果
+			const parsed = JSON.parse(analysisText);
+			return {
+				summary: parsed.summary || '文件历史分析完成',
+				evolutionPattern: parsed.evolutionPattern || '演进模式分析中',
+				keyChanges: Array.isArray(parsed.keyChanges) ? parsed.keyChanges : ['关键变更分析中'],
+				recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : ['建议分析中']
+			};
+		} catch (error) {
+			// 如果不是JSON格式，则作为纯文本处理
+			return {
+				summary: analysisText.substring(0, 200),
+				evolutionPattern: '基于提交历史的演进分析',
+				keyChanges: ['详细变更分析请查看提交历史'],
+				recommendations: ['建议定期重构和优化代码结构']
+			};
+		}
+	}
+
+	/**
+	 * Send file history AI analysis update
+	 */
+	private sendFileHistoryAIAnalysisUpdate(filePath: string, analysis: FileHistoryAIAnalysis) {
+		if (this.aiAnalysisUpdateCallback) {
+			// 使用特殊的格式来标识这是文件历史分析
+			this.aiAnalysisUpdateCallback(`file_history:${filePath}`, null, analysis);
 		}
 	}
 }

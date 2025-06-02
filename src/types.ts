@@ -1263,6 +1263,49 @@ export interface ResponseAIAnalysisUpdate extends BaseMessage {
 	readonly aiAnalysis: AIAnalysis | null;
 }
 
+export interface RequestFileHistory extends BaseMessage {
+	readonly command: 'fileHistory';
+	readonly repo: string;
+	readonly filePath: string;
+	readonly maxCommits: number;
+}
+
+export interface ResponseFileHistory extends ResponseWithErrorInfo {
+	readonly command: 'fileHistory';
+	readonly filePath: string;
+	readonly commits: GitFileHistoryCommit[];
+	readonly aiAnalysis?: FileHistoryAIAnalysis | null;
+}
+
+export interface GitFileHistoryCommit {
+	readonly hash: string;
+	readonly parents: string[];
+	readonly author: string;
+	readonly authorEmail: string;
+	readonly authorDate: number;
+	readonly committer: string;
+	readonly committerEmail: string;
+	readonly committerDate: number;
+	readonly message: string;
+	readonly fileChange: GitFileChange;
+	readonly additions: number | null;
+	readonly deletions: number | null;
+}
+
+export interface FileHistoryAIAnalysis {
+	readonly summary: string;
+	readonly evolutionPattern: string;
+	readonly keyChanges: string[];
+	readonly recommendations: string[];
+}
+
+export interface GitFileHistoryData {
+	readonly filePath: string;
+	readonly commits: GitFileHistoryCommit[];
+	readonly aiAnalysis: FileHistoryAIAnalysis | null;
+	readonly error: ErrorInfo;
+}
+
 export type RequestMessage =
 	RequestAddRemote
 	| RequestAddTag
@@ -1325,7 +1368,8 @@ export type RequestMessage =
 	| RequestViewDiff
 	| RequestViewDiffWithWorkingFile
 	| RequestViewFileAtRevision
-	| RequestViewScm;
+	| RequestViewScm
+	| RequestFileHistory;
 
 export type ResponseMessage =
 	ResponseAddRemote
@@ -1387,7 +1431,9 @@ export type ResponseMessage =
 	| ResponseViewDiffWithWorkingFile
 	| ResponseViewFileAtRevision
 	| ResponseViewScm
-	| ResponseAIAnalysisUpdate;
+	| ResponseAIAnalysisUpdate
+	| ResponseFileHistory
+	| ResponseFileHistoryAIAnalysisUpdate;
 
 
 /** Helper Types */
@@ -1426,4 +1472,12 @@ export interface GitCommitComparisonData {
 	readonly fileChanges: GitFileChange[];
 	readonly aiAnalysis?: AIAnalysis | null; // Add AI analysis field
 	readonly error: ErrorInfo;
+}
+
+export interface ResponseFileHistoryAIAnalysisUpdate extends BaseMessage {
+	readonly command: 'fileHistoryAIAnalysisUpdate';
+	readonly commitHash: string;
+	readonly compareWithHash: string | null;
+	readonly filePath: string;
+	readonly aiAnalysis: FileHistoryAIAnalysis | null;
 }

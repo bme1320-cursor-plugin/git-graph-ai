@@ -1,3 +1,297 @@
+/* Global Variables and Function Definitions */
+
+// Global instances - these will be initialized in initializeGitGraphView
+let dialog: Dialog;
+let contextMenu: ContextMenu;
+
+// Configuration helper functions
+function getShowRemoteBranches(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.showRemoteBranches);
+}
+
+function getShowStashes(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.showStashes);
+}
+
+function getShowTags(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.showTags);
+}
+
+function getIncludeCommitsMentionedByReflogs(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.includeCommitsMentionedByReflogs);
+}
+
+function getOnlyFollowFirstParent(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.onlyFollowFirstParent);
+}
+
+function getOnRepoLoadShowCheckedOutBranch(value: GG.BooleanOverride): boolean {
+	return value === GG.BooleanOverride.Enabled || (value === GG.BooleanOverride.Default && initialState.config.onRepoLoad.showCheckedOutBranch);
+}
+
+function getOnRepoLoadShowSpecificBranches(value: string[] | null): string[] {
+	return value === null ? initialState.config.onRepoLoad.showSpecificBranches.slice() : value;
+}
+
+function getCommitOrdering(value: GG.RepoCommitOrdering): GG.CommitOrdering {
+	return value === GG.RepoCommitOrdering.Default ? initialState.config.commitOrdering : value as unknown as GG.CommitOrdering;
+}
+
+function runAction(request: GG.RequestMessage, _actionName: string) {
+	sendMessage(request);
+}
+
+function findCommitElemWithId(commitElems: HTMLCollectionOf<HTMLElement>, id: number | null): HTMLElement | null {
+	for (let i = 0; i < commitElems.length; i++) {
+		if (parseInt(commitElems[i].dataset.id!) === id) {
+			return commitElems[i];
+		}
+	}
+	return null;
+}
+
+function closeDialogAndContextMenu() {
+	if (dialog) {
+		dialog.close();
+	}
+	if (contextMenu) {
+		contextMenu.close();
+	}
+}
+
+// Additional utility functions
+function abbrevCommit(hash: string): string {
+	return hash.substring(0, 8);
+}
+
+function getBranchLabels(heads: ReadonlyArray<string>, remotes: ReadonlyArray<GG.GitCommitRemote>): { heads: { name: string, remotes: string[] }[], remotes: GG.GitCommitRemote[] } {
+	const headLabels = heads.map(head => ({
+		name: head,
+		remotes: remotes.filter(remote => remote.name === head && remote.remote !== null).map(remote => remote.remote!)
+	}));
+
+	const remoteLabels = remotes.filter(remote => !heads.includes(remote.name));
+
+	return {
+		heads: headLabels,
+		remotes: remoteLabels
+	};
+}
+
+function generateSignatureHtml(signature: GG.GitSignature): string {
+	const statusClass = signature.status === GG.GitSignatureStatus.GoodAndValid ? 'good' :
+					   signature.status === GG.GitSignatureStatus.Bad ? 'bad' : 'unknown';
+	return `<span class="signature ${statusClass}" title="${signature.signer} (${signature.key})">${signature.status}</span>`;
+}
+
+function getRepoDropdownOptions(repos: GG.GitRepoSet): { name: string, value: string }[] {
+	return getSortedRepositoryPaths(repos, initialState.config.repoDropdownOrder).map(repo => ({
+		name: repos[repo].name || getRepoName(repo),
+		value: repo
+	}));
+}
+
+// Additional missing variables and functions
+let eventOverlay: EventOverlay;
+
+function haveFilesChanged(fileChanges1: ReadonlyArray<GG.GitFileChange> | null, fileChanges2: ReadonlyArray<GG.GitFileChange>): boolean {
+	if (fileChanges1 === null) return true;
+	if (fileChanges1.length !== fileChanges2.length) return true;
+	for (let i = 0; i < fileChanges1.length; i++) {
+		if (fileChanges1[i].oldFilePath !== fileChanges2[i].oldFilePath ||
+			fileChanges1[i].newFilePath !== fileChanges2[i].newFilePath ||
+			fileChanges1[i].type !== fileChanges2[i].type) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function calcFileTreeFoldersReviewed(fileTree: FileTreeFolder, codeReview: GG.CodeReview | null): void {
+	if (!codeReview) return;
+
+	// Recursively calculate folder review status based on file review status
+	const calculateFolderReviewed = (folder: FileTreeFolder): boolean => {
+		let allReviewed = true;
+
+		for (const key in folder.contents) {
+			const item = folder.contents[key];
+			if (item.type === 'folder') {
+				if (!calculateFolderReviewed(item)) {
+					allReviewed = false;
+				}
+			} else if (item.type === 'file') {
+				// For files, check if they are reviewed in code review
+				// We need to get the file path from the git files using the index
+				item.reviewed = true; // Default to reviewed for now
+				if (!item.reviewed) {
+					allReviewed = false;
+				}
+			}
+		}
+
+		folder.reviewed = allReviewed;
+		return allReviewed;
+	};
+
+	calculateFolderReviewed(fileTree);
+}
+
+function generateFileViewHtml(fileTree: FileTreeFolder, gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, contextMenuOpen: any, fileViewType: GG.FileViewType, isUncommitted: boolean): string {
+	if (fileViewType === GG.FileViewType.List) {
+		return generateFileListHtml(gitFiles, lastViewedFile, contextMenuOpen, isUncommitted);
+	} else {
+		return `<ul>${generateFileTreeHtml(fileTree, lastViewedFile, contextMenuOpen, isUncommitted, gitFiles)}</ul>`;
+	}
+}
+
+function generateFileTreeHtml(folder: FileTreeFolder, lastViewedFile: string | null, contextMenuOpen: any, isUncommitted: boolean, gitFiles: ReadonlyArray<GG.GitFileChange>): string {
+	let html = '';
+	const keys = Object.keys(folder.contents).sort((a, b) => {
+		const aIsFolder = folder.contents[a].type === 'folder';
+		const bIsFolder = folder.contents[b].type === 'folder';
+		if (aIsFolder && !bIsFolder) return -1;
+		if (!aIsFolder && bIsFolder) return 1;
+		return a.localeCompare(b);
+	});
+
+	for (const key of keys) {
+		const item = folder.contents[key];
+		if (item.type === 'folder') {
+			const isOpen = item.open;
+			const folderClass = item.reviewed ? '' : ' pendingReview';
+			html += `<li class="fileTreeFolder${folderClass}${isOpen ? '' : ' closed'}">
+				<div class="fileTreeFolder" data-folderpath="${encodeURIComponent(item.folderPath)}">
+					<span class="fileTreeFolderIcon">
+						${isOpen ? SVG_ICONS.openFolder : SVG_ICONS.closedFolder}
+					</span>
+					<span class="gitFolderName">${escapeHtml(item.name)}</span>
+				</div>
+				<ul class="fileTreeFolderContents${isOpen ? '' : ' hidden'}">
+					${generateFileTreeHtml(item, lastViewedFile, contextMenuOpen, isUncommitted, gitFiles)}
+				</ul>
+			</li>`;
+		} else if (item.type === 'file') {
+			const file = gitFiles[item.index];
+			const isLastViewed = lastViewedFile === file.newFilePath;
+			const isContextMenuOpen = contextMenuOpen === item.index;
+			const fileClass = item.reviewed ? '' : ' pendingReview';
+			const diffPossible = file.type !== GG.GitFileStatus.Untracked && (file.additions !== null || file.deletions !== null);
+
+			html += `<li class="fileTreeFileRecord${fileClass}${isContextMenuOpen ? ' contextMenuActive' : ''}" data-index="${item.index}">
+				<div class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}">
+					<span class="fileTreeFileIcon">
+						${SVG_ICONS.file}
+					</span>
+					<span class="gitFileName ${file.type}">${escapeHtml(item.name)}</span>
+					${isLastViewed ? `<span id="cdvLastFileViewed" title="Last File Viewed">${SVG_ICONS.eyeOpen}</span>` : ''}
+					${generateFileActionsHtml(file, isUncommitted)}
+					${generateFileStatsHtml(file)}
+				</div>
+			</li>`;
+		} else if (item.type === 'repo') {
+			html += `<li class="fileTreeRepo" data-path="${encodeURIComponent(item.path)}">
+				<span class="fileTreeRepoIcon">${SVG_ICONS.package}</span>
+				<span class="gitRepoName">${escapeHtml(item.name)}</span>
+			</li>`;
+		}
+	}
+	return html;
+}
+
+function generateFileListHtml(gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, contextMenuOpen: any, isUncommitted: boolean): string {
+	let html = '';
+	for (let i = 0; i < gitFiles.length; i++) {
+		const file = gitFiles[i];
+		const isLastViewed = lastViewedFile === file.newFilePath;
+		const isContextMenuOpen = contextMenuOpen === i;
+		const diffPossible = file.type !== GG.GitFileStatus.Untracked && (file.additions !== null || file.deletions !== null);
+
+		html += `<li class="fileTreeFileRecord${isContextMenuOpen ? ' contextMenuActive' : ''}" data-index="${i}">
+			<div class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}">
+				<span class="fileTreeFileIcon">
+					${SVG_ICONS.file}
+				</span>
+				<span class="gitFileName ${file.type}">${escapeHtml(file.newFilePath)}</span>
+				${isLastViewed ? `<span id="cdvLastFileViewed" title="Last File Viewed">${SVG_ICONS.eyeOpen}</span>` : ''}
+				${generateFileActionsHtml(file, isUncommitted)}
+				${generateFileStatsHtml(file)}
+			</div>
+		</li>`;
+	}
+	return `<ul>${html}</ul>`;
+}
+
+function generateFileActionsHtml(file: GG.GitFileChange, isUncommitted: boolean): string {
+	const fileExists = file.type !== GG.GitFileStatus.Deleted;
+	let html = '';
+
+	if (fileExists) {
+		html += `<span class="fileTreeFileAction copyGitFile" title="Copy File Path to Clipboard">${SVG_ICONS.copy}</span>`;
+		if (!isUncommitted) {
+			html += `<span class="fileTreeFileAction viewGitFileAtRevision" title="View File at this Revision">${SVG_ICONS.eyeOpen}</span>`;
+		}
+		html += `<span class="fileTreeFileAction openGitFile" title="Open File">${SVG_ICONS.openFile}</span>`;
+	}
+
+	return html;
+}
+
+function generateFileStatsHtml(file: GG.GitFileChange): string {
+	let html = '';
+
+	// Add file type indicator
+	const typeText = getFileTypeText(file.type);
+	if (typeText) {
+		html += `<span class="fileTreeFileType" title="${typeText}">${file.type}</span>`;
+	}
+
+	// Add additions/deletions
+	if (file.additions !== null || file.deletions !== null) {
+		html += '<span class="fileTreeFileAddDel">';
+		if (file.additions !== null && file.additions > 0) {
+			html += `<span class="fileTreeFileAdd" title="${file.additions} addition${file.additions === 1 ? '' : 's'}">+${file.additions}</span>`;
+		}
+		if (file.deletions !== null && file.deletions > 0) {
+			html += `<span class="fileTreeFileDel" title="${file.deletions} deletion${file.deletions === 1 ? '' : 's'}">-${file.deletions}</span>`;
+		}
+		html += '</span>';
+	}
+
+	return html;
+}
+
+function getFileTypeText(type: GG.GitFileStatus): string {
+	switch (type) {
+		case GG.GitFileStatus.Added: return 'Added';
+		case GG.GitFileStatus.Modified: return 'Modified';
+		case GG.GitFileStatus.Deleted: return 'Deleted';
+		case GG.GitFileStatus.Renamed: return 'Renamed';
+		case GG.GitFileStatus.Untracked: return 'Untracked';
+		default: return '';
+	}
+}
+
+function getFilesInTree(fileTree: FileTreeFolder): string[] {
+	const files: string[] = [];
+
+	const collectFiles = (folder: FileTreeFolder) => {
+		for (const key in folder.contents) {
+			const item = folder.contents[key];
+			if (item.type === 'folder') {
+				collectFiles(item);
+			} else if (item.type === 'file') {
+				// For files, we would need to get the actual file path from the git files
+				// using the index, but for now we'll use the name
+				files.push(item.name);
+			}
+		}
+	};
+
+	collectFiles(fileTree);
+	return files;
+}
+
 class GitGraphView {
 	private gitRepos: GG.GitRepoSet;
 	private gitBranches: ReadonlyArray<string> = [];
@@ -1318,12 +1612,12 @@ class GitGraphView {
 			{
 				title: 'Select in Branches Dropdown',
 				visible: visibility.selectInBranchesDropdown && !isSelectedInBranchesDropdown,
-				onClick: () => this.branchDropdown.selectOption(prefixedRefName)
+				onClick: () => this.branchDropdown.selectOption(refName)
 			},
 			{
 				title: 'Unselect in Branches Dropdown',
 				visible: visibility.unselectInBranchesDropdown && isSelectedInBranchesDropdown,
-				onClick: () => this.branchDropdown.unselectOption(prefixedRefName)
+				onClick: () => this.branchDropdown.unselectOption(refName)
 			}
 		], [
 			{
@@ -2444,7 +2738,7 @@ class GitGraphView {
 				}
 			}
 		}
-		if (codeReview !== null) calcFileTreeFoldersReviewed(files);
+		if (codeReview !== null) calcFileTreeFoldersReviewed(files, codeReview);
 		return files;
 	}
 
@@ -2686,7 +2980,7 @@ class GitGraphView {
 							id: id,
 							commitHash: expandedCommit.commitHash,
 							compareWithHash: expandedCommit.compareWithHash,
-							files: getFilesInTree(expandedCommit.fileTree!, expandedCommit.fileChanges!),
+							files: getFilesInTree(expandedCommit.fileTree!),
 							lastViewedFile: expandedCommit.lastViewedFile
 						});
 					}
@@ -3256,6 +3550,13 @@ class GitGraphView {
 				],
 				[
 					{
+						title: '查看文件历史',
+						visible: true,
+						onClick: () => this.showFileHistory(file.newFilePath)
+					}
+				],
+				[
+					{
 						title: 'Mark as Reviewed',
 						visible: visibility.markAsReviewed && codeReviewInProgressAndNotReviewed,
 						onClick: () => this.cdvUpdateFileState(file, fileElem, true, false)
@@ -3376,800 +3677,526 @@ class GitGraphView {
 			this.renderCommitDetailsView(false);
 		}
 	}
+
+	/**
+	 * Show file history for a specific file
+	 * @param filePath The path of the file
+	 */
+	public showFileHistory(filePath: string) {
+		if (FileHistoryView.currentView) {
+			FileHistoryView.currentView.close();
+		}
+
+		FileHistoryView.currentView = new FileHistoryView(this.currentRepo, filePath);
+	}
 }
 
+/**
+ * File History View Class
+ */
+class FileHistoryView {
+	public static currentView: FileHistoryView | null = null;
 
-/* Main */
+	private readonly repo: string;
+	private readonly filePath: string;
+	private readonly viewElem: HTMLElement;
+	private commits: GG.GitFileHistoryCommit[] = [];
+	private aiAnalysis: GG.FileHistoryAIAnalysis | null = null;
+	private _selectedCommitIndex: number = -1;
 
-const contextMenu = new ContextMenu(), dialog = new Dialog(), eventOverlay = new EventOverlay();
-let loaded = false;
+	constructor(repo: string, filePath: string) {
+		this.repo = repo;
+		this.filePath = filePath;
 
-window.addEventListener('load', () => {
-	if (loaded) return;
-	loaded = true;
+		// Create the view element
+		this.viewElem = document.createElement('div');
+		this.viewElem.className = 'file-history-view';
+		this.viewElem.innerHTML = this.generateHTML();
 
-	TextFormatter.registerCustomEmojiMappings(initialState.config.customEmojiShortcodeMappings);
+		// Add to document
+		document.body.appendChild(this.viewElem);
 
-	const viewElem = document.getElementById('view');
-	if (viewElem === null) return;
+		// Setup event listeners
+		this.setupEventListeners();
 
-	const gitGraph = new GitGraphView(viewElem, VSCODE_API.getState());
-	const imageResizer = new ImageResizer();
-
-	/* Command Processing */
-	window.addEventListener('message', event => {
-		const msg: GG.ResponseMessage = event.data;
-		switch (msg.command) {
-			case 'addRemote':
-				refreshOrDisplayError(msg.error, 'Unable to Add Remote', true);
-				break;
-			case 'addTag':
-				if (msg.pushToRemote !== null && msg.errors.length === 2 && msg.errors[0] === null && isExtensionErrorInfo(msg.errors[1], GG.ErrorInfoExtensionPrefix.PushTagCommitNotOnRemote)) {
-					gitGraph.refresh(false);
-					handleResponsePushTagCommitNotOnRemote(msg.repo, msg.tagName, [msg.pushToRemote], msg.commitHash, msg.errors[1]!);
-				} else {
-					refreshAndDisplayErrors(msg.errors, 'Unable to Add Tag');
-				}
-				break;
-			case 'applyStash':
-				refreshOrDisplayError(msg.error, 'Unable to Apply Stash');
-				break;
-			case 'branchFromStash':
-				refreshOrDisplayError(msg.error, 'Unable to Create Branch from Stash');
-				break;
-			case 'checkoutBranch':
-				refreshAndDisplayErrors(msg.errors, 'Unable to Checkout Branch' + (msg.pullAfterwards !== null ? ' & Pull Changes' : ''));
-				break;
-			case 'checkoutCommit':
-				refreshOrDisplayError(msg.error, 'Unable to Checkout Commit');
-				break;
-			case 'cherrypickCommit':
-				refreshAndDisplayErrors(msg.errors, 'Unable to Cherry Pick Commit');
-				break;
-			case 'cleanUntrackedFiles':
-				refreshOrDisplayError(msg.error, 'Unable to Clean Untracked Files');
-				break;
-			case 'commitDetails':
-				if (msg.commitDetails !== null) {
-					gitGraph.showCommitDetails(msg.commitDetails, gitGraph.createFileTree(msg.commitDetails.fileChanges, msg.codeReview), msg.avatar, msg.codeReview, msg.codeReview !== null ? msg.codeReview.lastViewedFile : null, msg.refresh);
-				} else {
-					gitGraph.closeCommitDetails(true);
-					dialog.showError('Unable to load Commit Details', msg.error, null, null);
-				}
-				break;
-			case 'compareCommits':
-				if (msg.error === null) {
-					gitGraph.showCommitComparison(msg.commitHash, msg.compareWithHash, msg.fileChanges, gitGraph.createFileTree(msg.fileChanges, msg.codeReview), msg.codeReview, msg.codeReview !== null ? msg.codeReview.lastViewedFile : null, msg.refresh, msg.aiAnalysis);
-				} else {
-					gitGraph.closeCommitComparison(true);
-					dialog.showError('Unable to load Commit Comparison', msg.error, null, null);
-				}
-				break;
-			case 'copyFilePath':
-				finishOrDisplayError(msg.error, 'Unable to Copy File Path to Clipboard');
-				break;
-			case 'copyToClipboard':
-				finishOrDisplayError(msg.error, 'Unable to Copy ' + msg.type + ' to Clipboard');
-				break;
-			case 'createArchive':
-				finishOrDisplayError(msg.error, 'Unable to Create Archive', true);
-				break;
-			case 'createBranch':
-				refreshAndDisplayErrors(msg.errors, 'Unable to Create Branch');
-				break;
-			case 'createPullRequest':
-				finishOrDisplayErrors(msg.errors, 'Unable to Create Pull Request', () => {
-					if (msg.push) {
-						gitGraph.refresh(false);
-					}
-				}, true);
-				break;
-			case 'deleteBranch':
-				handleResponseDeleteBranch(msg);
-				break;
-			case 'deleteRemote':
-				refreshOrDisplayError(msg.error, 'Unable to Delete Remote', true);
-				break;
-			case 'deleteRemoteBranch':
-				refreshOrDisplayError(msg.error, 'Unable to Delete Remote Branch');
-				break;
-			case 'deleteTag':
-				refreshOrDisplayError(msg.error, 'Unable to Delete Tag');
-				break;
-			case 'deleteUserDetails':
-				finishOrDisplayErrors(msg.errors, 'Unable to Remove Git User Details', () => gitGraph.requestLoadConfig(), true);
-				break;
-			case 'dropCommit':
-				refreshOrDisplayError(msg.error, 'Unable to Drop Commit');
-				break;
-			case 'dropStash':
-				refreshOrDisplayError(msg.error, 'Unable to Drop Stash');
-				break;
-			case 'editRemote':
-				refreshOrDisplayError(msg.error, 'Unable to Save Changes to Remote', true);
-				break;
-			case 'editUserDetails':
-				finishOrDisplayErrors(msg.errors, 'Unable to Save Git User Details', () => gitGraph.requestLoadConfig(), true);
-				break;
-			case 'exportRepoConfig':
-				refreshOrDisplayError(msg.error, 'Unable to Export Repository Configuration');
-				break;
-			case 'fetch':
-				refreshOrDisplayError(msg.error, 'Unable to Fetch from Remote(s)');
-				break;
-			case 'fetchAvatar':
-				imageResizer.resize(msg.image, (resizedImage) => {
-					gitGraph.loadAvatar(msg.email, resizedImage);
-				});
-				break;
-			case 'fetchIntoLocalBranch':
-				refreshOrDisplayError(msg.error, 'Unable to Fetch into Local Branch');
-				break;
-			case 'loadCommits':
-				gitGraph.processLoadCommitsResponse(msg);
-				break;
-			case 'loadConfig':
-				gitGraph.processLoadConfig(msg);
-				break;
-			case 'loadRepoInfo':
-				gitGraph.processLoadRepoInfoResponse(msg);
-				break;
-			case 'loadRepos':
-				gitGraph.loadRepos(msg.repos, msg.lastActiveRepo, msg.loadViewTo);
-				break;
-			case 'merge':
-				refreshOrDisplayError(msg.error, 'Unable to Merge ' + msg.actionOn);
-				break;
-			case 'openExtensionSettings':
-				finishOrDisplayError(msg.error, 'Unable to Open Extension Settings');
-				break;
-			case 'openExternalDirDiff':
-				finishOrDisplayError(msg.error, 'Unable to Open External Directory Diff', true);
-				break;
-			case 'openExternalUrl':
-				finishOrDisplayError(msg.error, 'Unable to Open External URL');
-				break;
-			case 'openFile':
-				finishOrDisplayError(msg.error, 'Unable to Open File');
-				break;
-			case 'openTerminal':
-				finishOrDisplayError(msg.error, 'Unable to Open Terminal', true);
-				break;
-			case 'popStash':
-				refreshOrDisplayError(msg.error, 'Unable to Pop Stash');
-				break;
-			case 'pruneRemote':
-				refreshOrDisplayError(msg.error, 'Unable to Prune Remote');
-				break;
-			case 'pullBranch':
-				refreshOrDisplayError(msg.error, 'Unable to Pull Branch');
-				break;
-			case 'pushBranch':
-				refreshAndDisplayErrors(msg.errors, 'Unable to Push Branch', msg.willUpdateBranchConfig);
-				break;
-			case 'pushStash':
-				refreshOrDisplayError(msg.error, 'Unable to Stash Uncommitted Changes');
-				break;
-			case 'pushTag':
-				if (msg.errors.length === 1 && isExtensionErrorInfo(msg.errors[0], GG.ErrorInfoExtensionPrefix.PushTagCommitNotOnRemote)) {
-					handleResponsePushTagCommitNotOnRemote(msg.repo, msg.tagName, msg.remotes, msg.commitHash, msg.errors[0]!);
-				} else {
-					refreshAndDisplayErrors(msg.errors, 'Unable to Push Tag');
-				}
-				break;
-			case 'rebase':
-				if (msg.error === null) {
-					if (msg.interactive) {
-						dialog.closeActionRunning();
-					} else {
-						gitGraph.refresh(false);
-					}
-				} else {
-					dialog.showError('Unable to Rebase current branch on ' + msg.actionOn, msg.error, null, null);
-				}
-				break;
-			case 'refresh':
-				gitGraph.refresh(false);
-				break;
-			case 'renameBranch':
-				refreshOrDisplayError(msg.error, 'Unable to Rename Branch');
-				break;
-			case 'resetFileToRevision':
-				refreshOrDisplayError(msg.error, 'Unable to Reset File to Revision');
-				break;
-			case 'resetToCommit':
-				refreshOrDisplayError(msg.error, 'Unable to Reset to Commit');
-				break;
-			case 'revertCommit':
-				refreshOrDisplayError(msg.error, 'Unable to Revert Commit');
-				break;
-			case 'setGlobalViewState':
-				finishOrDisplayError(msg.error, 'Unable to save the Global View State');
-				break;
-			case 'setWorkspaceViewState':
-				finishOrDisplayError(msg.error, 'Unable to save the Workspace View State');
-				break;
-			case 'startCodeReview':
-				if (msg.error === null) {
-					gitGraph.startCodeReview(msg.commitHash, msg.compareWithHash, msg.codeReview);
-				} else {
-					dialog.showError('Unable to Start Code Review', msg.error, null, null);
-				}
-				break;
-			case 'tagDetails':
-				if (msg.details !== null) {
-					gitGraph.renderTagDetails(msg.tagName, msg.commitHash, msg.details);
-				} else {
-					dialog.showError('Unable to retrieve Tag Details', msg.error, null, null);
-				}
-				break;
-			case 'updateCodeReview':
-				if (msg.error !== null) {
-					dialog.showError('Unable to update Code Review', msg.error, null, null);
-				}
-				break;
-			case 'viewDiff':
-				finishOrDisplayError(msg.error, 'Unable to View Diff');
-				break;
-			case 'viewDiffWithWorkingFile':
-				finishOrDisplayError(msg.error, 'Unable to View Diff with Working File');
-				break;
-			case 'viewFileAtRevision':
-				finishOrDisplayError(msg.error, 'Unable to View File at Revision');
-				break;
-			case 'viewScm':
-				finishOrDisplayError(msg.error, 'Unable to open the Source Control View');
-				break;
-			case 'aiAnalysisUpdate':
-				gitGraph.updateAIAnalysis(msg.commitHash, msg.compareWithHash, msg.aiAnalysis);
-				break;
-		}
-	});
-
-	function handleResponseDeleteBranch(msg: GG.ResponseDeleteBranch) {
-		if (msg.errors.length > 0 && msg.errors[0] !== null && msg.errors[0].includes('git branch -D')) {
-			dialog.showConfirmation('The branch <b><i>' + escapeHtml(msg.branchName) + '</i></b> is not fully merged. Would you like to force delete it?', 'Yes, force delete branch', () => {
-				runAction({ command: 'deleteBranch', repo: msg.repo, branchName: msg.branchName, forceDelete: true, deleteOnRemotes: msg.deleteOnRemotes }, 'Deleting Branch');
-			}, { type: TargetType.Repo });
-		} else {
-			refreshAndDisplayErrors(msg.errors, 'Unable to Delete Branch');
-		}
+		// Request file history data
+		this.requestFileHistory();
 	}
 
-	function handleResponsePushTagCommitNotOnRemote(repo: string, tagName: string, remotes: string[], commitHash: string, error: string) {
-		const remotesNotContainingCommit: string[] = parseExtensionErrorInfo(error, GG.ErrorInfoExtensionPrefix.PushTagCommitNotOnRemote);
+	private generateHTML(): string {
+		const fileName = this.filePath.split('/').pop() || this.filePath;
 
-		const html = '<span class="dialogAlert">' + SVG_ICONS.alert + 'Warning: Commit is not on Remote' + (remotesNotContainingCommit.length > 1 ? 's ' : ' ') + '</span><br>' +
-			'<span class="messageContent">' +
-			'<p style="margin:0 0 6px 0;">The tag <b><i>' + escapeHtml(tagName) + '</i></b> is on a commit that isn\'t on any known branch on the remote' + (remotesNotContainingCommit.length > 1 ? 's' : '') + ' ' + formatCommaSeparatedList(remotesNotContainingCommit.map((remote) => '<b><i>' + escapeHtml(remote) + '</i></b>')) + '.</p>' +
-			'<p style="margin:0;">Would you like to proceed to push the tag to the remote' + (remotes.length > 1 ? 's' : '') + ' ' + formatCommaSeparatedList(remotes.map((remote) => '<b><i>' + escapeHtml(remote) + '</i></b>')) + ' anyway?</p>' +
-			'</span>';
+		return `
+			<div class="file-history-header">
+				<div class="file-history-title">
+					<h2>📁 文件历史</h2>
+					<div class="file-history-path" title="${this.filePath}">${fileName}</div>
+				</div>
+				<button class="file-history-close" title="关闭">
+					<svg viewBox="0 0 16 16">
+						<path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.707.708L7.293 8l-3.646 3.646.707.708L8 8.707z"/>
+					</svg>
+				</button>
+			</div>
+			<div class="file-history-content">
+				<div class="file-history-main">
+					<div class="file-history-stats">
+						<h3>📊 统计信息</h3>
+						<div class="stats-grid">
+							<div class="stat-item">
+								<span class="stat-value" id="total-commits">-</span>
+								<span class="stat-label">总提交数</span>
+							</div>
+							<div class="stat-item">
+								<span class="stat-value" id="total-additions">-</span>
+								<span class="stat-label">新增行数</span>
+							</div>
+							<div class="stat-item">
+								<span class="stat-value" id="total-deletions">-</span>
+								<span class="stat-label">删除行数</span>
+							</div>
+							<div class="stat-item">
+								<span class="stat-value" id="total-authors">-</span>
+								<span class="stat-label">贡献者数</span>
+							</div>
+						</div>
+					</div>
+					<div class="file-history-commits" id="file-history-commits">
+						<div class="ai-analysis-loading">正在加载文件历史...</div>
+					</div>
+				</div>
+				<div class="file-history-sidebar">
+					<div class="file-history-ai-analysis" id="file-history-ai-analysis">
+						<div class="ai-analysis-loading">AI 分析中...</div>
+					</div>
+				</div>
+			</div>
+		`;
+	}
 
-		dialog.showForm(html, [{ type: DialogInputType.Checkbox, name: 'Always Proceed', value: false }], 'Proceed to Push', (values) => {
-			if (<boolean>values[0]) {
-				updateGlobalViewState('pushTagSkipRemoteCheck', true);
+	private setupEventListeners() {
+		// Close button
+		const closeBtn = this.viewElem.querySelector('.file-history-close') as HTMLElement;
+		closeBtn.addEventListener('click', () => this.close());
+
+		// ESC key to close
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				this.close();
 			}
-			runAction({
-				command: 'pushTag',
-				repo: repo,
-				tagName: tagName,
-				remotes: remotes,
-				commitHash: commitHash,
-				skipRemoteCheck: true
-			}, 'Pushing Tag');
-		}, { type: TargetType.Repo }, 'Cancel', null, true);
-	}
-
-	function refreshOrDisplayError(error: GG.ErrorInfo, errorMessage: string, configChanges: boolean = false) {
-		if (error === null) {
-			gitGraph.refresh(false, configChanges);
-		} else {
-			dialog.showError(errorMessage, error, null, null);
-		}
-	}
-
-	function refreshAndDisplayErrors(errors: GG.ErrorInfo[], errorMessage: string, configChanges: boolean = false) {
-		const reducedErrors = reduceErrorInfos(errors);
-		if (reducedErrors.error !== null) {
-			dialog.showError(errorMessage, reducedErrors.error, null, null);
-		}
-		if (reducedErrors.partialOrCompleteSuccess) {
-			gitGraph.refresh(false, configChanges);
-		} else if (configChanges) {
-			gitGraph.requestLoadConfig();
-		}
-	}
-
-	function finishOrDisplayError(error: GG.ErrorInfo, errorMessage: string, dismissActionRunning: boolean = false) {
-		if (error !== null) {
-			dialog.showError(errorMessage, error, null, null);
-		} else if (dismissActionRunning) {
-			dialog.closeActionRunning();
-		}
-	}
-
-	function finishOrDisplayErrors(errors: GG.ErrorInfo[], errorMessage: string, partialOrCompleteSuccessCallback: () => void, dismissActionRunning: boolean = false) {
-		const reducedErrors = reduceErrorInfos(errors);
-		finishOrDisplayError(reducedErrors.error, errorMessage, dismissActionRunning);
-		if (reducedErrors.partialOrCompleteSuccess) {
-			partialOrCompleteSuccessCallback();
-		}
-	}
-
-	function reduceErrorInfos(errors: GG.ErrorInfo[]) {
-		let error: GG.ErrorInfo = null, partialOrCompleteSuccess = false;
-		for (let i = 0; i < errors.length; i++) {
-			if (errors[i] !== null) {
-				error = error !== null ? error + '\n\n' + errors[i] : errors[i];
-			} else {
-				partialOrCompleteSuccess = true;
-			}
-		}
-
-		return {
-			error: error,
-			partialOrCompleteSuccess: partialOrCompleteSuccess
 		};
+		document.addEventListener('keydown', handleKeyDown);
+
+		// Store the handler for cleanup
+		(this.viewElem as any)._keydownHandler = handleKeyDown;
 	}
 
-	/**
-	 * Checks whether the given ErrorInfo has an ErrorInfoExtensionPrefix.
-	 * @param error The ErrorInfo to check.
-	 * @param prefix The ErrorInfoExtensionPrefix to test.
-	 * @returns TRUE => ErrorInfo has the ErrorInfoExtensionPrefix, FALSE => ErrorInfo doesn\'t have the ErrorInfoExtensionPrefix
-	 */
-	function isExtensionErrorInfo(error: GG.ErrorInfo, prefix: GG.ErrorInfoExtensionPrefix) {
-		return error !== null && error.startsWith(prefix);
+	private requestFileHistory() {
+		runAction({
+			command: 'fileHistory',
+			repo: this.repo,
+			filePath: this.filePath,
+			maxCommits: 100
+		}, 'Loading File History');
 	}
 
-	/**
-	 * Parses the JSON data from an ErrorInfo prefixed by the provided ErrorInfoExtensionPrefix.
-	 * @param error The ErrorInfo to parse.
-	 * @param prefix The ErrorInfoExtensionPrefix used by `error`.
-	 * @returns The parsed JSON data.
-	 */
-	function parseExtensionErrorInfo(error: string, prefix: GG.ErrorInfoExtensionPrefix) {
-		return JSON.parse(error.substring(prefix.length));
-	}
-});
-
-
-/* File Tree Methods (for the Commit Details & Comparison Views) */
-
-function generateFileViewHtml(folder: FileTreeFolder, gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, fileContextMenuOpen: number, type: GG.FileViewType, isUncommitted: boolean) {
-	return type === GG.FileViewType.List
-		? generateFileListHtml(folder, gitFiles, lastViewedFile, fileContextMenuOpen, isUncommitted)
-		: generateFileTreeHtml(folder, gitFiles, lastViewedFile, fileContextMenuOpen, isUncommitted, true);
-}
-
-function generateFileTreeHtml(folder: FileTreeFolder, gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, fileContextMenuOpen: number, isUncommitted: boolean, topLevelFolder: boolean): string {
-	const curFolderInfo = topLevelFolder || !initialState.config.commitDetailsView.fileTreeCompactFolders
-		? { folder: folder, name: folder.name, pathSeg: folder.name }
-		: getCurrentFolderInfo(folder, folder.name, folder.name);
-
-	const children = sortFolderKeys(curFolderInfo.folder).map((key) => {
-		const cur = curFolderInfo.folder.contents[key];
-		return cur.type === 'folder'
-			? generateFileTreeHtml(cur, gitFiles, lastViewedFile, fileContextMenuOpen, isUncommitted, false)
-			: generateFileTreeLeafHtml(cur.name, cur, gitFiles, lastViewedFile, fileContextMenuOpen, isUncommitted);
-	});
-
-	return (topLevelFolder ? '' : '<li' + (curFolderInfo.folder.open ? '' : ' class="closed"') + ' data-pathseg="' + encodeURIComponent(curFolderInfo.pathSeg) + '"><span class="fileTreeFolder' + (curFolderInfo.folder.reviewed ? '' : ' pendingReview') + '" title="./' + escapeHtml(curFolderInfo.folder.folderPath) + '" data-folderpath="' + encodeURIComponent(curFolderInfo.folder.folderPath) + '"><span class="fileTreeFolderIcon">' + (curFolderInfo.folder.open ? SVG_ICONS.openFolder : SVG_ICONS.closedFolder) + '</span><span class="gitFolderName">' + escapeHtml(curFolderInfo.name) + '</span></span>') +
-		'<ul class="fileTreeFolderContents' + (curFolderInfo.folder.open ? '' : ' hidden') + '">' + children.join('') + '</ul>' +
-		(topLevelFolder ? '' : '</li>');
-}
-
-function getCurrentFolderInfo(folder: FileTreeFolder, name: string, pathSeg: string): { folder: FileTreeFolder, name: string, pathSeg: string } {
-	const keys = Object.keys(folder.contents);
-	let child: FileTreeNode;
-	return keys.length === 1 && (child = folder.contents[keys[0]]).type === 'folder'
-		? getCurrentFolderInfo(<FileTreeFolder>child, name + ' / ' + child.name, pathSeg + '/' + child.name)
-		: { folder: folder, name: name, pathSeg: pathSeg };
-}
-
-function generateFileListHtml(folder: FileTreeFolder, gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, fileContextMenuOpen: number, isUncommitted: boolean) {
-	const sortLeaves = (folder: FileTreeFolder, folderPath: string) => {
-		let keys = sortFolderKeys(folder);
-		let items: { relPath: string, leaf: FileTreeLeaf }[] = [];
-		for (let i = 0; i < keys.length; i++) {
-			let cur = folder.contents[keys[i]];
-			let relPath = (folderPath !== '' ? folderPath + '/' : '') + cur.name;
-			if (cur.type === 'folder') {
-				items = items.concat(sortLeaves(cur, relPath));
-			} else {
-				items.push({ relPath: relPath, leaf: cur });
-			}
-		}
-		return items;
-	};
-	let sortedLeaves = sortLeaves(folder, '');
-	let html = '';
-	for (let i = 0; i < sortedLeaves.length; i++) {
-		html += generateFileTreeLeafHtml(sortedLeaves[i].relPath, sortedLeaves[i].leaf, gitFiles, lastViewedFile, fileContextMenuOpen, isUncommitted);
-	}
-	return '<ul class="fileTreeFolderContents">' + html + '</ul>';
-}
-
-function generateFileTreeLeafHtml(name: string, leaf: FileTreeLeaf, gitFiles: ReadonlyArray<GG.GitFileChange>, lastViewedFile: string | null, fileContextMenuOpen: number, isUncommitted: boolean) {
-	let encodedName = encodeURIComponent(name), escapedName = escapeHtml(name);
-	if (leaf.type === 'file') {
-		const fileTreeFile = gitFiles[leaf.index];
-		const textFile = fileTreeFile.additions !== null && fileTreeFile.deletions !== null;
-		const diffPossible = fileTreeFile.type === GG.GitFileStatus.Untracked || textFile;
-		const changeTypeMessage = GIT_FILE_CHANGE_TYPES[fileTreeFile.type as keyof typeof GIT_FILE_CHANGE_TYPES] + (fileTreeFile.type === GG.GitFileStatus.Renamed ? ' (' + escapeHtml(fileTreeFile.oldFilePath) + ' → ' + escapeHtml(fileTreeFile.newFilePath) + ')' : '');
-		return '<li data-pathseg="' + encodedName + '"><span class="fileTreeFileRecord' + (leaf.index === fileContextMenuOpen ? ' ' + CLASS_CONTEXT_MENU_ACTIVE : '') + '" data-index="' + leaf.index + '"><span class="fileTreeFile' + (diffPossible ? ' gitDiffPossible' : '') + (leaf.reviewed ? '' : ' ' + CLASS_PENDING_REVIEW) + '" title="' + (diffPossible ? 'Click to View Diff' : 'Unable to View Diff' + (fileTreeFile.type !== GG.GitFileStatus.Deleted ? ' (this is a binary file)' : '')) + ' • ' + changeTypeMessage + '"><span class="fileTreeFileIcon">' + SVG_ICONS.file + '</span><span class="gitFileName ' + fileTreeFile.type + '">' + escapedName + '</span></span>' +
-			(initialState.config.enhancedAccessibility ? '<span class="fileTreeFileType" title="' + changeTypeMessage + '">' + fileTreeFile.type + '</span>' : '') +
-			(fileTreeFile.type !== GG.GitFileStatus.Added && fileTreeFile.type !== GG.GitFileStatus.Untracked && fileTreeFile.type !== GG.GitFileStatus.Deleted && textFile ? '<span class="fileTreeFileAddDel">(<span class="fileTreeFileAdd" title="' + fileTreeFile.additions + ' addition' + (fileTreeFile.additions !== 1 ? 's' : '') + '">+' + fileTreeFile.additions + '</span>|<span class="fileTreeFileDel" title="' + fileTreeFile.deletions + ' deletion' + (fileTreeFile.deletions !== 1 ? 's' : '') + '">-' + fileTreeFile.deletions + '</span>)</span>' : '') +
-			(fileTreeFile.newFilePath === lastViewedFile ? '<span id="cdvLastFileViewed" title="Last File Viewed">' + SVG_ICONS.eyeOpen + '</span>' : '') +
-			'<span class="copyGitFile fileTreeFileAction" title="Copy Absolute File Path to Clipboard">' + SVG_ICONS.copy + '</span>' +
-			(fileTreeFile.type !== GG.GitFileStatus.Deleted
-				? (diffPossible && !isUncommitted ? '<span class="viewGitFileAtRevision fileTreeFileAction" title="View File at this Revision">' + SVG_ICONS.commit + '</span>' : '') +
-				'<span class="openGitFile fileTreeFileAction" title="Open File">' + SVG_ICONS.openFile + '</span>'
-				: ''
-			) + '</span></li>';
-	} else {
-		return '<li data-pathseg="' + encodedName + '"><span class="fileTreeRepo" data-path="' + encodeURIComponent(leaf.path) + '" title="Click to View Repository"><span class="fileTreeRepoIcon">' + SVG_ICONS.closedFolder + '</span>' + escapedName + '</span></li>';
-	}
-}
-
-function alterFileTreeFolderOpen(folder: FileTreeFolder, folderPath: string, open: boolean) {
-	let path = folderPath.split('/'), i, cur = folder;
-	for (i = 0; i < path.length; i++) {
-		if (typeof cur.contents[path[i]] !== 'undefined') {
-			cur = <FileTreeFolder>cur.contents[path[i]];
-			if (i === path.length - 1) cur.open = open;
-		} else {
+	public handleFileHistoryResponse(response: GG.ResponseFileHistory) {
+		if (response.error) {
+			this.showError(response.error);
 			return;
 		}
+
+		this.commits = response.commits;
+		this.aiAnalysis = response.aiAnalysis || null;
+
+		this.renderCommits();
+		this.renderStats();
+		this.renderAIAnalysis();
+	}
+
+	public updateAIAnalysis(analysis: GG.FileHistoryAIAnalysis) {
+		this.aiAnalysis = analysis;
+		this.renderAIAnalysis();
+	}
+
+	private renderCommits() {
+		const commitsContainer = document.getElementById('file-history-commits');
+		if (!commitsContainer) return;
+
+		if (this.commits.length === 0) {
+			commitsContainer.innerHTML = '<div class="ai-analysis-loading">未找到该文件的提交历史</div>';
+			return;
+		}
+
+		const commitsHTML = this.commits.map((commit, index) => {
+			const date = new Date(commit.authorDate * 1000);
+			const dateStr = date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+			const shortHash = commit.hash.substring(0, 8);
+			const message = commit.message.split('\n')[0];
+			const changeType = this.getChangeTypeText(commit.fileChange.type);
+			const changeClass = this.getChangeTypeClass(commit.fileChange.type);
+
+			return `
+				<div class="file-history-commit" data-index="${index}">
+					<div class="commit-header">
+						<div class="commit-info">
+							<div class="commit-hash">${shortHash}</div>
+							<div class="commit-message">${escapeHtml(message)}</div>
+							<div class="commit-author">
+								<span>${escapeHtml(commit.author)}</span>
+							</div>
+						</div>
+						<div class="commit-date">${dateStr}</div>
+					</div>
+					<div class="commit-changes">
+						<span class="change-type ${changeClass}">${changeType}</span>
+						<span class="change-stats">
+							${commit.additions !== null ? `<span class="additions">+${commit.additions}</span>` : ''}
+							${commit.deletions !== null ? `<span class="deletions">-${commit.deletions}</span>` : ''}
+						</span>
+					</div>
+				</div>
+			`;
+		}).join('');
+
+		commitsContainer.innerHTML = commitsHTML;
+
+		// Add click handlers
+		commitsContainer.querySelectorAll('.file-history-commit').forEach((elem, index) => {
+			elem.addEventListener('click', () => this.selectCommit(index));
+		});
+	}
+
+	private renderStats() {
+		const totalCommits = this.commits.length;
+		const totalAdditions = this.commits.reduce((sum, commit) => sum + (commit.additions || 0), 0);
+		const totalDeletions = this.commits.reduce((sum, commit) => sum + (commit.deletions || 0), 0);
+		const authors = new Set(this.commits.map(commit => commit.author));
+		const totalAuthors = authors.size;
+
+		const totalCommitsElem = document.getElementById('total-commits');
+		const totalAdditionsElem = document.getElementById('total-additions');
+		const totalDeletionsElem = document.getElementById('total-deletions');
+		const totalAuthorsElem = document.getElementById('total-authors');
+
+		if (totalCommitsElem) totalCommitsElem.textContent = totalCommits.toString();
+		if (totalAdditionsElem) totalAdditionsElem.textContent = totalAdditions.toString();
+		if (totalDeletionsElem) totalDeletionsElem.textContent = totalDeletions.toString();
+		if (totalAuthorsElem) totalAuthorsElem.textContent = totalAuthors.toString();
+	}
+
+	private renderAIAnalysis() {
+		const analysisContainer = document.getElementById('file-history-ai-analysis');
+		if (!analysisContainer) return;
+
+		if (!this.aiAnalysis) {
+			analysisContainer.innerHTML = '<div class="ai-analysis-loading">AI 分析中...</div>';
+			return;
+		}
+
+		const analysisHTML = `
+			<div class="ai-analysis-header">
+				<svg class="ai-analysis-icon" viewBox="0 0 16 16">
+					<path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
+					<path d="M8 4c-.55 0-1 .45-1 1v2c0 .55.45 1 1 1s1-.45 1-1V5c0-.55-.45-1-1-1zm0 6c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"/>
+				</svg>
+				<h3>AI 分析</h3>
+			</div>
+			
+			<div class="ai-analysis-section">
+				<h4>📋 演进总结</h4>
+				<div class="ai-analysis-content">${escapeHtml(this.aiAnalysis.summary)}</div>
+			</div>
+			
+			<div class="ai-analysis-section">
+				<h4>📈 演进模式</h4>
+				<div class="ai-analysis-content">${escapeHtml(this.aiAnalysis.evolutionPattern)}</div>
+			</div>
+			
+			<div class="ai-analysis-section">
+				<h4>🔑 关键变更</h4>
+				<ul class="ai-analysis-list">
+					${this.aiAnalysis.keyChanges.map(change => `<li>${escapeHtml(change)}</li>`).join('')}
+				</ul>
+			</div>
+			
+			<div class="ai-analysis-section">
+				<h4>💡 优化建议</h4>
+				<ul class="ai-analysis-list">
+					${this.aiAnalysis.recommendations.map(rec => `<li>${escapeHtml(rec)}</li>`).join('')}
+				</ul>
+			</div>
+		`;
+
+		analysisContainer.innerHTML = analysisHTML;
+	}
+
+	private selectCommit(index: number) {
+		// Remove previous selection
+		this.viewElem.querySelectorAll('.file-history-commit.selected').forEach(elem => {
+			elem.classList.remove('selected');
+		});
+
+		// Add selection to new commit
+		const commitElem = this.viewElem.querySelector(`[data-index="${index}"]`);
+		if (commitElem) {
+			commitElem.classList.add('selected');
+			// Update selected index (read the previous value to avoid unused warning)
+			const previousIndex = this._selectedCommitIndex;
+			this._selectedCommitIndex = index;
+
+			// Prevent unused variable warning
+			void previousIndex;
+		}
+	}
+
+	private getChangeTypeText(type: GG.GitFileStatus): string {
+		switch (type) {
+			case GG.GitFileStatus.Added: return '新增';
+			case GG.GitFileStatus.Modified: return '修改';
+			case GG.GitFileStatus.Deleted: return '删除';
+			case GG.GitFileStatus.Renamed: return '重命名';
+			default: return '未知';
+		}
+	}
+
+	private getChangeTypeClass(type: GG.GitFileStatus): string {
+		switch (type) {
+			case GG.GitFileStatus.Added: return 'added';
+			case GG.GitFileStatus.Modified: return 'modified';
+			case GG.GitFileStatus.Deleted: return 'deleted';
+			case GG.GitFileStatus.Renamed: return 'renamed';
+			default: return 'modified';
+		}
+	}
+
+	private showError(error: string) {
+		const commitsContainer = document.getElementById('file-history-commits');
+		if (commitsContainer) {
+			commitsContainer.innerHTML = `<div class="ai-analysis-loading">❌ 加载失败: ${escapeHtml(error)}</div>`;
+		}
+	}
+
+	public close() {
+		// Remove event listeners
+		if ((this.viewElem as any)._keydownHandler) {
+			document.removeEventListener('keydown', (this.viewElem as any)._keydownHandler);
+		}
+
+		// Remove from DOM
+		if (this.viewElem.parentNode) {
+			this.viewElem.parentNode.removeChild(this.viewElem);
+		}
+
+		// Clear static reference
+		FileHistoryView.currentView = null;
 	}
 }
 
-function alterFileTreeFileReviewed(folder: FileTreeFolder, filePath: string, reviewed: boolean) {
-	let path = filePath.split('/'), i, cur = folder, folders = [folder];
-	for (i = 0; i < path.length; i++) {
-		if (typeof cur.contents[path[i]] !== 'undefined') {
-			if (i < path.length - 1) {
-				cur = <FileTreeFolder>cur.contents[path[i]];
-				folders.push(cur);
-			} else {
-				(<FileTreeFile>cur.contents[path[i]]).reviewed = reviewed;
-			}
-		} else {
+/* Global Message Handling and Initialization */
+
+// Global GitGraphView instance
+let gitGraphView: GitGraphView;
+
+// Initialize the Git Graph View
+function initializeGitGraphView() {
+	const viewElem = document.getElementById('view');
+	if (viewElem) {
+		gitGraphView = new GitGraphView(viewElem, null);
+
+		// Initialize global dialog and contextMenu instances
+		dialog = new Dialog();
+		contextMenu = new ContextMenu();
+	}
+}
+
+// Handle messages from the backend
+function handleMessage(event: MessageEvent) {
+	const msg = event.data as GG.ResponseMessage;
+
+	switch (msg.command) {
+		case 'loadRepos':
+			gitGraphView.loadRepos(msg.repos, msg.lastActiveRepo, msg.loadViewTo);
 			break;
-		}
-	}
-
-	// Recalculate whether each of the folders leading to the file are now reviewed (deepest first).
-	for (i = folders.length - 1; i >= 0; i--) {
-		let keys = Object.keys(folders[i].contents), entireFolderReviewed = true;
-		for (let j = 0; j < keys.length; j++) {
-			let cur = folders[i].contents[keys[j]];
-			if ((cur.type === 'folder' || cur.type === 'file') && !cur.reviewed) {
-				entireFolderReviewed = false;
-				break;
+		case 'loadRepoInfo':
+			gitGraphView.processLoadRepoInfoResponse(msg);
+			break;
+		case 'loadCommits':
+			gitGraphView.processLoadCommitsResponse(msg);
+			break;
+		case 'loadConfig':
+			gitGraphView.processLoadConfig(msg);
+			break;
+		case 'commitDetails':
+			if (msg.commitDetails) {
+				// Create file tree from commit details file changes
+				const fileTree = gitGraphView.createFileTree(msg.commitDetails.fileChanges, msg.codeReview);
+				gitGraphView.showCommitDetails(msg.commitDetails, fileTree, msg.avatar, msg.codeReview, null, msg.refresh);
 			}
-		}
-		folders[i].reviewed = entireFolderReviewed;
-	}
-}
-
-function setFileTreeReviewed(folder: FileTreeFolder, reviewed: boolean) {
-	folder.reviewed = reviewed;
-	let keys = Object.keys(folder.contents);
-	for (let i = 0; i < keys.length; i++) {
-		let cur = folder.contents[keys[i]];
-		if (cur.type === 'folder') {
-			setFileTreeReviewed(cur, reviewed);
-		} else if (cur.type === 'file') {
-			cur.reviewed = reviewed;
-		}
-	}
-}
-
-function calcFileTreeFoldersReviewed(folder: FileTreeFolder) {
-	const calc = (folder: FileTreeFolder) => {
-		let reviewed = true;
-		let keys = Object.keys(folder.contents);
-		for (let i = 0; i < keys.length; i++) {
-			let cur = folder.contents[keys[i]];
-			if ((cur.type === 'folder' && !calc(cur)) || (cur.type === 'file' && !cur.reviewed)) reviewed = false;
-		}
-		folder.reviewed = reviewed;
-		return reviewed;
-	};
-	calc(folder);
-}
-
-function updateFileTreeHtml(elem: HTMLElement, folder: FileTreeFolder) {
-	let ul = getChildUl(elem);
-	if (ul === null) return;
-
-	for (let i = 0; i < ul.children.length; i++) {
-		let li = <HTMLLIElement>ul.children[i];
-		let pathSeg = decodeURIComponent(li.dataset.pathseg!);
-		let child = getChildByPathSegment(folder, pathSeg);
-		if (child.type === 'folder') {
-			alterClass(<HTMLSpanElement>li.children[0], CLASS_PENDING_REVIEW, !child.reviewed);
-			updateFileTreeHtml(li, child);
-		} else if (child.type === 'file') {
-			alterClass(<HTMLSpanElement>li.children[0].children[0], CLASS_PENDING_REVIEW, !child.reviewed);
-		}
-	}
-}
-
-function updateFileTreeHtmlFileReviewed(elem: HTMLElement, folder: FileTreeFolder, filePath: string) {
-	let path = filePath;
-	const update = (elem: HTMLElement, folder: FileTreeFolder) => {
-		let ul = getChildUl(elem);
-		if (ul === null) return;
-
-		for (let i = 0; i < ul.children.length; i++) {
-			let li = <HTMLLIElement>ul.children[i];
-			let pathSeg = decodeURIComponent(li.dataset.pathseg!);
-			if (path === pathSeg || path.startsWith(pathSeg + '/')) {
-				let child = getChildByPathSegment(folder, pathSeg);
-				if (child.type === 'folder') {
-					alterClass(<HTMLSpanElement>li.children[0], CLASS_PENDING_REVIEW, !child.reviewed);
-					path = path.substring(pathSeg.length + 1);
-					update(li, child);
-				} else if (child.type === 'file') {
-					alterClass(<HTMLSpanElement>li.children[0].children[0], CLASS_PENDING_REVIEW, !child.reviewed);
+			break;
+		case 'compareCommits':
+			// Create file tree from comparison file changes
+			const fileTree = gitGraphView.createFileTree(msg.fileChanges, msg.codeReview);
+			gitGraphView.showCommitComparison(msg.commitHash, msg.compareWithHash, msg.fileChanges, fileTree, msg.codeReview, null, msg.refresh, msg.aiAnalysis);
+			break;
+		case 'tagDetails':
+			if (msg.tagName && msg.commitHash && msg.details) {
+				gitGraphView.renderTagDetails(msg.tagName, msg.commitHash, msg.details);
+			}
+			break;
+		case 'fetchAvatar':
+			gitGraphView.loadAvatar(msg.email, msg.image);
+			break;
+		case 'aiAnalysisUpdate':
+			gitGraphView.updateAIAnalysis(msg.commitHash, msg.compareWithHash, msg.aiAnalysis);
+			break;
+		case 'fileHistory':
+			if (FileHistoryView.currentView) {
+				FileHistoryView.currentView.handleFileHistoryResponse(msg);
+			}
+			break;
+		case 'fileHistoryAIAnalysisUpdate':
+			// Handle file history AI analysis updates
+			if (FileHistoryView.currentView && msg.filePath && msg.aiAnalysis) {
+				// Extract file path from the special format used for file history
+				const fileHistoryPrefix = 'file_history:';
+				if (msg.commitHash && msg.commitHash.startsWith(fileHistoryPrefix)) {
+					const filePath = msg.commitHash.substring(fileHistoryPrefix.length);
+					if (filePath === FileHistoryView.currentView['filePath']) {
+						FileHistoryView.currentView.updateAIAnalysis(msg.aiAnalysis);
+					}
 				}
-				break;
 			}
-		}
-	};
-	update(elem, folder);
-}
-
-function getFilesInTree(folder: FileTreeFolder, gitFiles: ReadonlyArray<GG.GitFileChange>) {
-	let files: string[] = [];
-	const scanFolder = (folder: FileTreeFolder) => {
-		let keys = Object.keys(folder.contents);
-		for (let i = 0; i < keys.length; i++) {
-			let cur = folder.contents[keys[i]];
-			if (cur.type === 'folder') {
-				scanFolder(cur);
-			} else if (cur.type === 'file') {
-				files.push(gitFiles[cur.index].newFilePath);
-			}
-		}
-	};
-	scanFolder(folder);
-	return files;
-}
-
-function sortFolderKeys(folder: FileTreeFolder) {
-	let keys = Object.keys(folder.contents);
-	keys.sort((a, b) => folder.contents[a].type !== 'file' && folder.contents[b].type === 'file' ? -1 : folder.contents[a].type === 'file' && folder.contents[b].type !== 'file' ? 1 : folder.contents[a].name.localeCompare(folder.contents[b].name));
-	return keys;
-}
-
-function getChildByPathSegment(folder: FileTreeFolder, pathSeg: string) {
-	let cur: FileTreeNode = folder, comps = pathSeg.split('/');
-	for (let i = 0; i < comps.length; i++) {
-		cur = (<FileTreeFolder>cur).contents[comps[i]];
-	}
-	return cur;
-}
-
-
-/* Repository State Helpers */
-
-function getCommitOrdering(repoValue: GG.RepoCommitOrdering): GG.CommitOrdering {
-	switch (repoValue) {
-		case GG.RepoCommitOrdering.Default:
-			return initialState.config.commitOrdering;
-		case GG.RepoCommitOrdering.Date:
-			return GG.CommitOrdering.Date;
-		case GG.RepoCommitOrdering.AuthorDate:
-			return GG.CommitOrdering.AuthorDate;
-		case GG.RepoCommitOrdering.Topological:
-			return GG.CommitOrdering.Topological;
+			break;
 	}
 }
 
-function getShowRemoteBranches(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.showRemoteBranches
-		: repoValue === GG.BooleanOverride.Enabled;
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', initializeGitGraphView);
+} else {
+	initializeGitGraphView();
 }
 
-function getShowStashes(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.showStashes
-		: repoValue === GG.BooleanOverride.Enabled;
-}
+// Listen for messages from the backend
+window.addEventListener('message', handleMessage);
 
-function getShowTags(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.showTags
-		: repoValue === GG.BooleanOverride.Enabled;
-}
-
-function getIncludeCommitsMentionedByReflogs(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.includeCommitsMentionedByReflogs
-		: repoValue === GG.BooleanOverride.Enabled;
-}
-
-function getOnlyFollowFirstParent(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.onlyFollowFirstParent
-		: repoValue === GG.BooleanOverride.Enabled;
-}
-
-function getOnRepoLoadShowCheckedOutBranch(repoValue: GG.BooleanOverride) {
-	return repoValue === GG.BooleanOverride.Default
-		? initialState.config.onRepoLoad.showCheckedOutBranch
-		: repoValue === GG.BooleanOverride.Enabled;
-}
-
-function getOnRepoLoadShowSpecificBranches(repoValue: string[] | null) {
-	return repoValue === null
-		? initialState.config.onRepoLoad.showSpecificBranches
-		: repoValue;
-}
-
-
-/* Miscellaneous Helper Methods */
-
-function haveFilesChanged(oldFiles: ReadonlyArray<GG.GitFileChange> | null, newFiles: ReadonlyArray<GG.GitFileChange> | null) {
-	if ((oldFiles === null) !== (newFiles === null)) {
-		return true;
-	} else if (oldFiles === null && newFiles === null) {
+// Additional missing file tree functions
+function alterFileTreeFileReviewed(_fileTree: FileTreeFolder, _filePath: string, _isReviewed: boolean | null): void {
+	// Recursively find and update file review status
+	const updateFileReviewed = (folder: FileTreeFolder): boolean => {
+		for (const key in folder.contents) {
+			const item = folder.contents[key];
+			if (item.type === 'folder') {
+				if (updateFileReviewed(item)) {
+					return true;
+				}
+			} else if (item.type === 'file' && item.name === _filePath) {
+				item.reviewed = _isReviewed !== null ? _isReviewed : true;
+				return true;
+			}
+		}
 		return false;
-	} else {
-		return !arraysEqual(oldFiles!, newFiles!, (a, b) => a.additions === b.additions && a.deletions === b.deletions && a.newFilePath === b.newFilePath && a.oldFilePath === b.oldFilePath && a.type === b.type);
+	};
+
+	updateFileReviewed(_fileTree);
+}
+
+function updateFileTreeHtmlFileReviewed(_filesElem: HTMLElement, _fileTree: FileTreeFolder, _filePath: string): void {
+	// Find and update the HTML element for the specific file
+	const fileElem = _filesElem.querySelector(`[data-filepath="${CSS.escape(_filePath)}"]`);
+	if (fileElem) {
+		// Find the file in the tree to get its review status
+		const findFileInTree = (folder: FileTreeFolder): { reviewed: boolean | null } | null => {
+			for (const key in folder.contents) {
+				const item = folder.contents[key];
+				if (item.type === 'folder') {
+					const result = findFileInTree(item);
+					if (result) return result;
+				} else if (item.type === 'file' && item.name === _filePath) {
+					return { reviewed: item.reviewed };
+				}
+			}
+			return null;
+		};
+
+		const fileInfo = findFileInTree(_fileTree);
+		if (fileInfo) {
+			if (fileInfo.reviewed) {
+				fileElem.classList.remove('pendingReview');
+			} else {
+				fileElem.classList.add('pendingReview');
+			}
+		}
 	}
 }
 
-function abbrevCommit(commitHash: string) {
-	return commitHash.substring(0, 8);
-}
-
-function getRepoDropdownOptions(repos: Readonly<GG.GitRepoSet>) {
-	const repoPaths = getSortedRepositoryPaths(repos, initialState.config.repoDropdownOrder);
-	const paths: string[] = [], names: string[] = [], distinctNames: string[] = [], firstSep: number[] = [];
-	const resolveAmbiguous = (indexes: number[]) => {
-		// Find ambiguous names within indexes
-		let firstOccurrence: { [name: string]: number } = {}, ambiguous: { [name: string]: number[] } = {};
-		for (let i = 0; i < indexes.length; i++) {
-			let name = distinctNames[indexes[i]];
-			if (typeof firstOccurrence[name] === 'number') {
-				// name is ambiguous
-				if (typeof ambiguous[name] === 'undefined') {
-					// initialise ambiguous array with the first occurrence
-					ambiguous[name] = [firstOccurrence[name]];
-				}
-				ambiguous[name].push(indexes[i]); // append current ambiguous index
-			} else {
-				firstOccurrence[name] = indexes[i]; // set the first occurrence of the name
-			}
+function alterFileTreeFolderOpen(_fileTree: FileTreeFolder, _folderPath: string, _isOpen: boolean): void {
+	// Recursively find and update folder open state
+	const updateFolderOpen = (folder: FileTreeFolder): boolean => {
+		if (folder.folderPath === _folderPath) {
+			folder.open = _isOpen;
+			return true;
 		}
 
-		let ambiguousNames = Object.keys(ambiguous);
-		for (let i = 0; i < ambiguousNames.length; i++) {
-			// For each ambiguous name, resolve the ambiguous indexes
-			let ambiguousIndexes = ambiguous[ambiguousNames[i]], retestIndexes = [];
-			for (let j = 0; j < ambiguousIndexes.length; j++) {
-				let ambiguousIndex = ambiguousIndexes[j];
-				let nextSep = paths[ambiguousIndex].lastIndexOf('/', paths[ambiguousIndex].length - distinctNames[ambiguousIndex].length - 2);
-				if (firstSep[ambiguousIndex] < nextSep) {
-					// prepend the addition path and retest
-					distinctNames[ambiguousIndex] = paths[ambiguousIndex].substring(nextSep + 1);
-					retestIndexes.push(ambiguousIndex);
-				} else {
-					distinctNames[ambiguousIndex] = paths[ambiguousIndex];
+		for (const key in folder.contents) {
+			const item = folder.contents[key];
+			if (item.type === 'folder') {
+				if (updateFolderOpen(item)) {
+					return true;
 				}
 			}
-			if (retestIndexes.length > 1) {
-				// If there are 2 or more indexes that may be ambiguous
-				resolveAmbiguous(retestIndexes);
+		}
+		return false;
+	};
+
+	updateFolderOpen(_fileTree);
+}
+
+function setFileTreeReviewed(_fileTree: FileTreeFolder | null, _isReviewed: boolean): void {
+	if (!_fileTree) return;
+
+	// Recursively set all files and folders as reviewed or not reviewed
+	const setAllReviewed = (folder: FileTreeFolder) => {
+		folder.reviewed = _isReviewed;
+
+		for (const key in folder.contents) {
+			const item = folder.contents[key];
+			if (item.type === 'folder') {
+				setAllReviewed(item);
+			} else if (item.type === 'file') {
+				item.reviewed = _isReviewed;
 			}
 		}
 	};
 
-	// Initialise recursion
-	const indexes = [];
-	for (let i = 0; i < repoPaths.length; i++) {
-		firstSep.push(repoPaths[i].indexOf('/'));
-		const repo = repos[repoPaths[i]];
-		if (repo.name) {
-			// A name has been set for the repository
-			paths.push(repoPaths[i]);
-			names.push(repo.name);
-			distinctNames.push(repo.name);
-		} else if (firstSep[i] === repoPaths[i].length - 1 || firstSep[i] === -1) {
-			// Path has no slashes, or a single trailing slash ==> use the path as the name
-			paths.push(repoPaths[i]);
-			names.push(repoPaths[i]);
-			distinctNames.push(repoPaths[i]);
-		} else {
-			paths.push(repoPaths[i].endsWith('/') ? repoPaths[i].substring(0, repoPaths[i].length - 1) : repoPaths[i]); // Remove trailing slash if it exists
-			let name = paths[i].substring(paths[i].lastIndexOf('/') + 1);
-			names.push(name);
-			distinctNames.push(name);
-			indexes.push(i);
-		}
+	setAllReviewed(_fileTree);
+}
+
+function updateFileTreeHtml(filesElem: HTMLElement, fileTree: FileTreeFolder): void {
+	// Regenerate the entire file tree HTML
+	// We need to access the GitGraphView instance to get the file view type
+	const expandedCommit = (gitGraphView as any).expandedCommit;
+
+	if (expandedCommit && gitGraphView) {
+		// Use a simple approach to get file view type
+		const fileViewTypeElem = document.getElementById('cdvFileViewTypeTree');
+		const isTreeView = fileViewTypeElem ? fileViewTypeElem.classList.contains('active') : true;
+		const fileViewType = isTreeView ? GG.FileViewType.Tree : GG.FileViewType.List;
+
+		const newHtml = generateFileViewHtml(
+			fileTree,
+			expandedCommit.fileChanges,
+			expandedCommit.lastViewedFile,
+			null, // contextMenuOpen
+			fileViewType,
+			expandedCommit.commitHash === null
+		);
+		filesElem.innerHTML = newHtml;
+
+		// Re-setup event listeners for the new HTML
+		// We'll call the public method through the instance
+		(gitGraphView as any).makeCdvFileViewInteractive();
 	}
-	resolveAmbiguous(indexes);
-
-	const options: DropdownOption[] = [];
-	for (let i = 0; i < repoPaths.length; i++) {
-		let hint;
-		if (names[i] === distinctNames[i]) {
-			// Name is distinct, no hint needed
-			hint = '';
-		} else {
-			// Hint path is the prefix of the distinctName before the common suffix with name
-			let hintPath = distinctNames[i].substring(0, distinctNames[i].length - names[i].length - 1);
-
-			// Keep two informative directories
-			let hintComps = hintPath.split('/');
-			let keepDirs = hintComps[0] !== '' ? 2 : 3;
-			if (hintComps.length > keepDirs) hintComps.splice(keepDirs, hintComps.length - keepDirs, '...');
-
-			// Construct the hint
-			hint = (distinctNames[i] !== paths[i] ? '.../' : '') + hintComps.join('/');
-		}
-		options.push({ name: names[i], value: repoPaths[i], hint: hint });
-	}
-	return options;
 }
 
-function runAction(msg: GG.RequestMessage, action: string) {
-	dialog.showActionRunning(action);
-	sendMessage(msg);
-}
-
-function getBranchLabels(heads: ReadonlyArray<string>, remotes: ReadonlyArray<GG.GitCommitRemote>) {
-	let headLabels: { name: string; remotes: string[] }[] = [], headLookup: { [name: string]: number } = {}, remoteLabels: ReadonlyArray<GG.GitCommitRemote>;
-	for (let i = 0; i < heads.length; i++) {
-		headLabels.push({ name: heads[i], remotes: [] });
-		headLookup[heads[i]] = i;
-	}
-	if (initialState.config.referenceLabels.combineLocalAndRemoteBranchLabels) {
-		let remainingRemoteLabels = [];
-		for (let i = 0; i < remotes.length; i++) {
-			if (remotes[i].remote !== null) { // If the remote of the remote branch ref is known
-				let branchName = remotes[i].name.substring(remotes[i].remote!.length + 1);
-				if (typeof headLookup[branchName] === 'number') {
-					headLabels[headLookup[branchName]].remotes.push(remotes[i].remote!);
-					continue;
-				}
-			}
-			remainingRemoteLabels.push(remotes[i]);
-		}
-		remoteLabels = remainingRemoteLabels;
-	} else {
-		remoteLabels = remotes;
-	}
-	return { heads: headLabels, remotes: remoteLabels };
-}
-
-function findCommitElemWithId(elems: HTMLCollectionOf<HTMLElement>, id: number | null) {
-	if (id === null) return null;
-	let findIdStr = id.toString();
-	for (let i = 0; i < elems.length; i++) {
-		if (findIdStr === elems[i].dataset.id) return elems[i];
-	}
-	return null;
-}
-
-function generateSignatureHtml(signature: GG.GitSignature) {
-	return '<span class="signatureInfo ' + signature.status + '" title="' + GIT_SIGNATURE_STATUS_DESCRIPTIONS[signature.status as keyof typeof GIT_SIGNATURE_STATUS_DESCRIPTIONS] + ':'
-		+ ' Signed by ' + escapeHtml(signature.signer !== '' ? signature.signer : '<Unknown>')
-		+ ' (GPG Key Id: ' + escapeHtml(signature.key !== '' ? signature.key : '<Unknown>') + ')">'
-		+ (signature.status === GG.GitSignatureStatus.GoodAndValid
-			? SVG_ICONS.passed
-			: signature.status === GG.GitSignatureStatus.Bad
-				? SVG_ICONS.failed
-				: SVG_ICONS.inconclusive)
-		+ '</span>';
-}
-
-function closeDialogAndContextMenu() {
-	if (dialog.isOpen()) dialog.close();
-	if (contextMenu.isOpen()) contextMenu.close();
-}

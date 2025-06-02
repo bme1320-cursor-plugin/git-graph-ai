@@ -86,14 +86,27 @@ export class GitGraphView extends Disposable {
 		this.logger = logger;
 		this.loadViewTo = loadViewTo;
 
-		// Set up AI analysis update callback
-		this.dataSource.setAIAnalysisUpdateCallback((commitHash, compareWithHash, aiAnalysis) => {
-			this.sendMessage({
-				command: 'aiAnalysisUpdate',
-				commitHash: commitHash,
-				compareWithHash: compareWithHash,
-				aiAnalysis: aiAnalysis
-			});
+		// Set up AI analysis update callback for DataSource
+		this.dataSource.setAIAnalysisUpdateCallback((commitHash: string, compareWithHash: string | null, aiAnalysis: any) => {
+			// Check if this is a file history AI analysis update
+			if (commitHash.startsWith('file_history:')) {
+				// Send file history AI analysis update
+				this.sendMessage({
+					command: 'fileHistoryAIAnalysisUpdate',
+					commitHash: commitHash,
+					compareWithHash: compareWithHash,
+					filePath: commitHash.substring('file_history:'.length),
+					aiAnalysis: aiAnalysis
+				});
+			} else {
+				// Send regular AI analysis update
+				this.sendMessage({
+					command: 'aiAnalysisUpdate',
+					commitHash: commitHash,
+					compareWithHash: compareWithHash,
+					aiAnalysis: aiAnalysis
+				});
+			}
 		});
 
 		const config = getConfig();
@@ -638,6 +651,16 @@ export class GitGraphView extends Disposable {
 				this.sendMessage({
 					command: 'viewScm',
 					error: await viewScm()
+				});
+				break;
+			case 'fileHistory':
+				const fileHistoryData = await this.dataSource.getFileHistory(msg.repo, msg.filePath, msg.maxCommits);
+				this.sendMessage({
+					command: 'fileHistory',
+					filePath: msg.filePath,
+					commits: fileHistoryData.commits,
+					aiAnalysis: fileHistoryData.aiAnalysis,
+					error: fileHistoryData.error
 				});
 				break;
 		}
