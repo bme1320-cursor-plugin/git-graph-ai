@@ -8,9 +8,10 @@ import { Logger } from './logger';
 import { RepoFileWatcher } from './repoFileWatcher';
 import { RepoManager } from './repoManager';
 import { GitCommitComparisonData } from './types';
-import { ErrorInfo, GitConfigLocation, GitGraphViewInitialState, GitPushBranchMode, GitRepoSet, LoadGitGraphViewTo, RequestMessage, ResponseMessage, TabIconColourTheme } from './types';
+import { ErrorInfo, GitConfigLocation, GitGraphViewInitialState, GitPushBranchMode, GitRepoSet, LoadGitGraphViewTo, RequestMessage, ResponseFileHistoryAIAnalysisUpdate, ResponseMessage, TabIconColourTheme } from './types';
 import { UNABLE_TO_FIND_GIT_MSG, UNCOMMITTED, archive, copyFilePathToClipboard, copyToClipboard, createPullRequest, getNonce, openExtensionSettings, openExternalUrl, openFile, showErrorMessage, viewDiff, viewDiffWithWorkingFile, viewFileAtRevision, viewScm } from './utils';
 import { Disposable, toDisposable } from './utils/disposable';
+import { FileHistoryTemplateOptions, generateFileHistoryHTML } from '../shared/fileHistoryTemplate';
 
 /**
  * Manages the Git Graph View.
@@ -718,21 +719,25 @@ export class GitGraphView extends Disposable {
 	private sendMessageToFileHistoryPanels(msg: ResponseMessage) {
 		this.logger.log(`[File History] Checking if message should be sent to file history panels. Command: ${msg.command}`);
 
-		if (msg.command === 'fileHistoryAIAnalysisUpdate' && 'filePath' in msg && 'aiAnalysis' in msg) {
-			this.logger.log(`[File History] Processing fileHistoryAIAnalysisUpdate for file: ${msg.filePath}`);
+		if (msg.command === 'fileHistoryAIAnalysisUpdate') {
+			const updateMsg = msg as ResponseFileHistoryAIAnalysisUpdate;
+			this.logger.log(`[File History] Processing fileHistoryAIAnalysisUpdate for file: ${updateMsg.filePath}`);
+			this.logger.log(`[File History] AI Analysis data: ${JSON.stringify(updateMsg.aiAnalysis, null, 2)}`);
 			this.logger.log(`[File History] Current file history panels: ${Array.from(GitGraphView.fileHistoryPanels.keys()).join(', ')}`);
 
 			// Find panels that match this file path
 			GitGraphView.fileHistoryPanels.forEach((panel, panelKey) => {
 				const [repo, filePath] = panelKey.split('|');
-				this.logger.log(`[File History] Checking panel ${panelKey}, extracted repo: ${repo}, filePath: ${filePath}, target filePath: ${msg.filePath}`);
+				this.logger.log(`[File History] Checking panel ${panelKey}, extracted repo: ${repo}, filePath: ${filePath}, target filePath: ${updateMsg.filePath}`);
 
-				if (filePath === msg.filePath && msg.aiAnalysis) {
+				if (filePath === updateMsg.filePath && updateMsg.aiAnalysis) {
 					this.logger.log(`[File History] Found matching panel for ${filePath}, sending update...`);
+					this.logger.log(`[File History] Sending analysis: ${JSON.stringify(updateMsg.aiAnalysis, null, 2)}`);
+
 					// Send update to the specific file history panel
 					panel.webview.postMessage({
 						command: 'updateAIAnalysis',
-						analysis: msg.aiAnalysis
+						analysis: updateMsg.aiAnalysis
 					}).then(
 						() => {
 							this.logger.log(`[File History] Successfully sent AI analysis update to file history panel: ${panelKey}`);
@@ -742,11 +747,11 @@ export class GitGraphView extends Disposable {
 						}
 					);
 				} else {
-					this.logger.log(`[File History] Panel ${panelKey} does not match or no analysis data`);
+					this.logger.log(`[File History] Panel ${panelKey} does not match (filePath: ${filePath} vs ${updateMsg.filePath}) or no analysis data (${!!updateMsg.aiAnalysis})`);
 				}
 			});
 		} else {
-			this.logger.log('[File History] Message is not a fileHistoryAIAnalysisUpdate or missing required fields');
+			this.logger.log(`[File History] Message is not a fileHistoryAIAnalysisUpdate. Received: ${msg.command}`);
 		}
 	}
 
@@ -993,369 +998,36 @@ export class GitGraphView extends Disposable {
 	 * Generate HTML content for the file history webview
 	 */
 	private generateFileHistoryHTML(fileHistoryData: any, fileName: string, nonce: string): string {
-		const config = getConfig();
-		let colorVars = '';
-		for (let i = 0; i < config.graph.colours.length; i++) {
-			colorVars += '--git-graph-color' + i + ':' + config.graph.colours[i] + '; ';
-		}
+		// Transform data to match the template interface
+		const options: FileHistoryTemplateOptions = {
+			fileName: fileName,
+			filePath: fileHistoryData.filePath,
+			stats: {
+				totalCommits: fileHistoryData.commits.length,
+				totalAdditions: fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.additions || 0), 0),
+				totalDeletions: fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.deletions || 0), 0),
+				totalAuthors: new Set(fileHistoryData.commits.map((c: any) => c.author)).size
+			},
+			commits: fileHistoryData.commits.map((commit: any) => ({
+				hash: commit.hash,
+				message: commit.message,
+				author: commit.author,
+				authorDate: commit.authorDate,
+				additions: commit.additions,
+				deletions: commit.deletions,
+				fileChangeType: commit.fileChange?.type
+			})),
+			aiAnalysis: fileHistoryData.aiAnalysis ? {
+				summary: fileHistoryData.aiAnalysis.summary,
+				evolutionPattern: fileHistoryData.aiAnalysis.evolutionPattern,
+				keyChanges: fileHistoryData.aiAnalysis.keyChanges,
+				recommendations: fileHistoryData.aiAnalysis.recommendations
+			} : undefined,
+			isWebView: true,
+			nonce: nonce
+		};
 
-		return `<!DOCTYPE html>
-		<html lang="en">
-			<head>
-				<meta charset="UTF-8">
-				<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:;">
-				<meta name="viewport" content="width=device-width, initial-scale=1.0">
-				<title>File History - ${fileName}</title>
-				<style>
-					:root {
-						${colorVars}
-						--vscode-font-family: var(--vscode-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
-						--vscode-editor-font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace);
-					}
-					* { box-sizing: border-box; }
-					body { 
-						margin: 0; 
-						padding: 20px; 
-						font-family: var(--vscode-font-family);
-						background-color: var(--vscode-editor-background, #1e1e1e);
-						color: var(--vscode-editor-foreground, #d4d4d4);
-						line-height: 1.5;
-					} 
-					.container {
-						max-width: 1200px;
-						margin: 0 auto;
-					}
-					.header {
-						margin-bottom: 20px;
-						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
-						padding-bottom: 15px;
-					}
-					.title {
-						font-size: 24px;
-						font-weight: 600;
-						margin: 0 0 8px 0;
-					}
-					.path {
-						font-size: 14px;
-						color: var(--vscode-descriptionForeground, #999);
-						font-family: var(--vscode-editor-font-family);
-						margin: 0;
-					}
-					.stats {
-						display: grid;
-						grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-						gap: 15px;
-						margin-bottom: 25px;
-						padding: 15px;
-						background-color: var(--vscode-sideBar-background, #2d2d30);
-						border-radius: 6px;
-						border: 1px solid var(--vscode-editorWidget-border, #454545);
-					}
-					.stat {
-						text-align: center;
-					}
-					.stat-value {
-						display: block;
-						font-size: 24px;
-						font-weight: 700;
-						color: var(--vscode-textLink-foreground, #3794ff);
-						margin-bottom: 4px;
-					}
-					.stat-label {
-						font-size: 11px;
-						color: var(--vscode-descriptionForeground, #999);
-						text-transform: uppercase;
-						letter-spacing: 0.5px;
-					}
-					.content {
-						display: grid;
-						grid-template-columns: 1fr 280px;
-						gap: 25px;
-					}
-					.commits {
-						background-color: var(--vscode-sideBar-background, #2d2d30);
-						border-radius: 6px;
-						border: 1px solid var(--vscode-editorWidget-border, #454545);
-						overflow: hidden;
-						max-height: 60vh;
-						overflow-y: auto;
-					}
-					.commit {
-						padding: 12px 16px;
-						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
-						cursor: pointer;
-						transition: background-color 0.15s;
-					}
-					.commit:hover {
-						background-color: var(--vscode-list-hoverBackground, #2a2d2e);
-					}
-					.commit:last-child {
-						border-bottom: none;
-					}
-					.commit-hash {
-						font-family: var(--vscode-editor-font-family);
-						font-size: 11px;
-						color: var(--vscode-textLink-foreground, #3794ff);
-						margin-bottom: 4px;
-					}
-					.commit-message {
-						font-size: 14px;
-						font-weight: 500;
-						margin-bottom: 6px;
-						line-height: 1.3;
-						overflow: hidden;
-						text-overflow: ellipsis;
-						white-space: nowrap;
-					}
-					.commit-meta {
-						font-size: 11px;
-						color: var(--vscode-descriptionForeground, #999);
-						display: flex;
-						justify-content: space-between;
-						align-items: center;
-						margin-bottom: 3px;
-					}
-					.commit-changes {
-						font-size: 10px;
-						color: var(--vscode-descriptionForeground, #999);
-					}
-					.ai-panel {
-						background-color: var(--vscode-sideBar-background, #2d2d30);
-						border-radius: 6px;
-						border: 1px solid var(--vscode-editorWidget-border, #454545);
-						padding: 16px;
-						max-height: 60vh;
-						overflow-y: auto;
-					}
-					.ai-header {
-						display: flex;
-						align-items: center;
-						gap: 8px;
-						margin-bottom: 16px;
-						padding-bottom: 8px;
-						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
-					}
-					.ai-icon {
-						width: 16px;
-						height: 16px;
-						fill: var(--vscode-textLink-foreground, #3794ff);
-					}
-					.ai-title {
-						margin: 0;
-						font-size: 14px;
-						font-weight: 600;
-					}
-					.ai-section {
-						margin-bottom: 16px;
-					}
-					.ai-section h4 {
-						margin: 0 0 8px 0;
-						font-size: 12px;
-						font-weight: 600;
-					}
-					.ai-content {
-						font-size: 12px;
-						line-height: 1.4;
-						background-color: var(--vscode-editor-background, #1e1e1e);
-						padding: 10px;
-						border-radius: 4px;
-						border: 1px solid var(--vscode-editorWidget-border, #454545);
-					}
-					.ai-list {
-						margin: 0;
-						padding-left: 16px;
-						font-size: 12px;
-						line-height: 1.4;
-					}
-					.ai-list li {
-						margin-bottom: 4px;
-					}
-					.ai-loading {
-						text-align: center;
-						color: var(--vscode-descriptionForeground, #999);
-						font-style: italic;
-						padding: 30px 16px;
-						font-size: 13px;
-					}
-					.empty {
-						text-align: center;
-						color: var(--vscode-descriptionForeground, #999);
-						padding: 30px 16px;
-						font-size: 13px;
-					}
-					@media (max-width: 768px) {
-						.content {
-							grid-template-columns: 1fr;
-						}
-						.stats {
-							grid-template-columns: repeat(2, 1fr);
-						}
-					}
-				</style>
-			</head>
-			<body>
-				<div class="container">
-					<div class="header">
-						<h1 class="title">📁 File History</h1>
-						<p class="path">${this.escapeHtml(fileHistoryData.filePath)}</p>
-					</div>
-					
-					<div class="stats">
-						<div class="stat">
-							<span class="stat-value">${fileHistoryData.commits.length}</span>
-							<span class="stat-label">Commits</span>
-						</div>
-						<div class="stat">
-							<span class="stat-value">${fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.additions || 0), 0)}</span>
-							<span class="stat-label">Additions</span>
-						</div>
-						<div class="stat">
-							<span class="stat-value">${fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.deletions || 0), 0)}</span>
-							<span class="stat-label">Deletions</span>
-						</div>
-						<div class="stat">
-							<span class="stat-value">${new Set(fileHistoryData.commits.map((c: any) => c.author)).size}</span>
-							<span class="stat-label">Contributors</span>
-						</div>
-					</div>
-					
-					<div class="content">
-						<div class="commits">
-							${fileHistoryData.commits.length > 0 ?
-		fileHistoryData.commits.map((commit: any) => `
-									<div class="commit">
-										<div class="commit-hash">${commit.hash.substring(0, 8)}</div>
-										<div class="commit-message" title="${this.escapeHtml(commit.message)}">${this.escapeHtml(commit.message.split('\\n')[0])}</div>
-										<div class="commit-meta">
-											<span>${this.escapeHtml(commit.author)}</span>
-											<span>${new Date(commit.authorDate * 1000).toLocaleDateString()}</span>
-										</div>
-										<div class="commit-changes">+${commit.additions || 0} -${commit.deletions || 0}</div>
-									</div>
-								`).join('') :
-		'<div class="empty">No commits found for this file.</div>'
-}
-						</div>
-						
-						<div class="ai-panel">
-							<div id="ai-content">
-								${fileHistoryData.aiAnalysis ? this.generateAIAnalysisHTML(fileHistoryData.aiAnalysis) :
-		'<div class="ai-loading">AI analysis will appear here when available...</div>'
-}
-							</div>
-						</div>
-					</div>
-				</div>
-				
-				<script nonce="${nonce}">
-					const vscode = acquireVsCodeApi();
-					
-					window.updateAIAnalysis = function(analysis) {
-						const container = document.getElementById('ai-content');
-						if (container && analysis) {
-							container.innerHTML = \`
-								<div class="ai-header">
-									<svg class="ai-icon" viewBox="0 0 16 16">
-										<path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
-									</svg>
-									<h3 class="ai-title">AI Analysis</h3>
-								</div>
-								
-								<div class="ai-section">
-									<h4>📋 Evolution Summary</h4>
-									<div class="ai-content">\${escapeHtml(analysis.summary)}</div>
-								</div>
-								
-								<div class="ai-section">
-									<h4>📈 Evolution Pattern</h4>
-									<div class="ai-content">\${escapeHtml(analysis.evolutionPattern)}</div>
-								</div>
-								
-								<div class="ai-section">
-									<h4>🔑 Key Changes</h4>
-									<ul class="ai-list">
-										\${analysis.keyChanges.map(change => \`<li>\${escapeHtml(change)}</li>\`).join('')}
-									</ul>
-								</div>
-								
-								<div class="ai-section">
-									<h4>💡 Recommendations</h4>
-									<ul class="ai-list">
-										\${analysis.recommendations.map(rec => \`<li>\${escapeHtml(rec)}</li>\`).join('')}
-									</ul>
-								</div>
-							\`;
-						}
-					};
-					
-					window.addEventListener('message', event => {
-						const message = event.data;
-						if (message.command === 'updateAIAnalysis' && message.analysis) {
-							window.updateAIAnalysis(message.analysis);
-						}
-					});
-					
-					function escapeHtml(text) {
-						return text
-							.replace(/&/g, '&amp;')
-							.replace(/</g, '&lt;')
-							.replace(/>/g, '&gt;')
-							.replace(/"/g, '&quot;')
-							.replace(/'/g, '&#39;');
-					}
-				</script>
-			</body>
-		</html>`;
-	}
-
-	/**
-	 * Generate AI analysis HTML section
-	 */
-	private generateAIAnalysisHTML(aiAnalysis: any): string {
-		return `
-			<div class="ai-header">
-				<svg class="ai-icon" viewBox="0 0 16 16">
-					<path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
-				</svg>
-				<h3 class="ai-title">AI Analysis</h3>
-			</div>
-			
-			<div class="ai-section">
-				<h4>📋 Evolution Summary</h4>
-				<div class="ai-content">${this.escapeHtml(aiAnalysis.summary)}</div>
-			</div>
-			
-			<div class="ai-section">
-				<h4>📈 Evolution Pattern</h4>
-				<div class="ai-content">${this.escapeHtml(aiAnalysis.evolutionPattern)}</div>
-			</div>
-			
-			<div class="ai-section">
-				<h4>🔑 Key Changes</h4>
-				<ul class="ai-list">
-					${aiAnalysis.keyChanges.map((change: string) => `<li>${this.escapeHtml(change)}</li>`).join('')}
-				</ul>
-			</div>
-			
-			<div class="ai-section">
-				<h4>💡 Recommendations</h4>
-				<ul class="ai-list">
-					${aiAnalysis.recommendations.map((rec: string) => `<li>${this.escapeHtml(rec)}</li>`).join('')}
-				</ul>
-			</div>
-		`;
-	}
-
-	/**
-	 * Escape HTML special characters
-	 */
-	private escapeHtml(text: string): string {
-		return text
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;')
-			.replace(/'/g, '&#39;');
+		return generateFileHistoryHTML(options);
 	}
 }
 

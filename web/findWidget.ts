@@ -244,7 +244,7 @@ class FindWidget {
 						|| findPattern.test(commit.message)
 						|| branchLabels.heads.some(head => findPattern!.test(head.name) || head.remotes.some(remote => findPattern!.test(remote)))
 						|| branchLabels.remotes.some(remote => findPattern!.test(remote.name))
-						|| commit.tags.some(tag => findPattern!.test(tag.name))
+						|| commit.tags.some((tag: any) => findPattern!.test(tag.name))
 						|| (colVisibility.date && findPattern.test(formatShortDate(commit.date).formatted))
 						|| (commit.stash !== null && findPattern.test(commit.stash.selector))
 					)) {

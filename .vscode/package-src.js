@@ -26,6 +26,12 @@ fs.readdirSync(OUT_DIRECTORY).forEach((fileName) => {
 	}
 });
 
+// Ensure the askpass output directory exists
+const askpassOutDir = path.join(OUT_DIRECTORY, ASKPASS_DIRECTORY);
+if (!fs.existsSync(askpassOutDir)) {
+	fs.mkdirSync(askpassOutDir, { recursive: true });
+}
+
 // Copy the askpass shell scripts to the output directory
 fs.readdirSync(path.join(SRC_DIRECTORY, ASKPASS_DIRECTORY)).forEach((fileName) => {
 	if (fileName.endsWith('.sh')) {

@@ -1,4 +1,4 @@
-import * as GG from '../out/types'; // Import types from back-end (requires `npm run compile-src`)
+import * as GG from '../out/src/types'; // Import types from back-end (requires `npm run compile-src`)
 
 // 扩展 GitRepoState 类型以包括新的属性
 type ExtendedGitRepoState = GG.GitRepoState & {

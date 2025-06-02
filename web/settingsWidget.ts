@@ -185,7 +185,7 @@ class SettingsWidget {
 				html += '<div class="settingsSection"><h3>Remote Configuration</h3><table><tr><th>Remote</th><th>URL</th><th>Type</th><th>Action</th></tr>';
 				if (this.config.remotes.length > 0) {
 					const hideRemotes = this.repo.hideRemotes;
-					this.config.remotes.forEach((remote, i) => {
+					this.config.remotes.forEach((remote: any, i: number) => {
 						const hidden = hideRemotes.includes(remote.name);
 						const fetchUrl = escapeHtml(remote.url || 'Not Set'), pushUrl = escapeHtml(remote.pushUrl || remote.url || 'Not Set');
 						html += '<tr class="lineAbove">' +
@@ -483,7 +483,7 @@ class SettingsWidget {
 
 					let config: GG.DeepWriteable<GG.PullRequestConfig>;
 					if (this.repo.pullRequestConfig === null) {
-						let originIndex = this.config.remotes.findIndex((remote) => remote.name === 'origin');
+						let originIndex = this.config.remotes.findIndex((remote: any) => remote.name === 'origin');
 						let sourceRemoteUrl = this.config.remotes[originIndex > -1 ? originIndex : 0].url;
 						let provider: GG.PullRequestProvider;
 						if (sourceRemoteUrl !== null) {
@@ -622,10 +622,10 @@ class SettingsWidget {
 	private showCreatePullRequestIntegrationDialog1(config: GG.DeepWriteable<GG.PullRequestConfig>) {
 		if (this.config === null) return;
 
-		let originIndex = this.config.remotes.findIndex((remote) => remote.name === 'origin');
-		let upstreamIndex = this.config.remotes.findIndex((remote) => remote.name === 'upstream');
-		let sourceRemoteIndex = this.config.remotes.findIndex((remote) => remote.name === config.sourceRemote);
-		let destRemoteIndex = this.config.remotes.findIndex((remote) => remote.name === config.destRemote);
+		let originIndex = this.config.remotes.findIndex((remote: any) => remote.name === 'origin');
+		let upstreamIndex = this.config.remotes.findIndex((remote: any) => remote.name === 'upstream');
+		let sourceRemoteIndex = this.config.remotes.findIndex((remote: any) => remote.name === config.sourceRemote);
+		let destRemoteIndex = this.config.remotes.findIndex((remote: any) => remote.name === config.destRemote);
 
 		if (config.sourceRemote === '' || sourceRemoteIndex === -1) {
 			sourceRemoteIndex = originIndex > -1 ? originIndex : 0;
@@ -641,7 +641,7 @@ class SettingsWidget {
 			{ name: 'GitLab', value: (GG.PullRequestProvider.GitLab).toString() }
 		];
 		let providerTemplateLookup: { [name: string]: string } = {};
-		initialState.config.customPullRequestProviders.forEach((provider) => {
+		initialState.config.customPullRequestProviders.forEach((provider: any) => {
 			providerOptions.push({ name: provider.name, value: (providerOptions.length + 1).toString() });
 			providerTemplateLookup[provider.name] = provider.templateUrl;
 		});
@@ -655,8 +655,8 @@ class SettingsWidget {
 		}
 		providerOptions.sort((a, b) => a.name.localeCompare(b.name));
 
-		let sourceRemoteOptions = this.config.remotes.map((remote, index) => ({ name: remote.name, value: index.toString() }));
-		let destRemoteOptions = sourceRemoteOptions.map((option) => option);
+		let sourceRemoteOptions = this.config.remotes.map((remote: any, index: number) => ({ name: remote.name, value: index.toString() }));
+		let destRemoteOptions = sourceRemoteOptions.map((option: any) => option);
 		destRemoteOptions.push({ name: 'Not a remote', value: '-1' });
 
 		dialog.showForm('Configure "Pull Request Creation" Integration (Step&nbsp;1/2)', [
