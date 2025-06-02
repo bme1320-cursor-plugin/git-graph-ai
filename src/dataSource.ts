@@ -2382,9 +2382,10 @@ ${index + 1}. 文件: ${fileData.filePath}
 	 * @param repo The path of the repository
 	 * @param filePath The path of the file relative to the repository root
 	 * @param maxCommits The maximum number of commits to return
+	 * @param skipAIAnalysis Whether to skip AI analysis for faster response
 	 * @returns The file history data
 	 */
-	public async getFileHistory(repo: string, filePath: string, maxCommits: number): Promise<GitFileHistoryData> {
+	public async getFileHistory(repo: string, filePath: string, maxCommits: number, skipAIAnalysis: boolean = false): Promise<GitFileHistoryData> {
 		try {
 			// Get the commit history for the file
 			const commits = await this.getFileCommitHistory(repo, filePath, maxCommits);
@@ -2402,7 +2403,7 @@ ${index + 1}. 文件: ${fileData.filePath}
 			const aiConfig = config.aiAnalysis;
 
 			// 异步执行AI分析，不阻塞基本信息的返回
-			if (aiConfig.enabled && commits.length > 0) {
+			if (!skipAIAnalysis && aiConfig.enabled && commits.length > 0) {
 				this.performAsyncFileHistoryAnalysis(filePath, commits)
 					.catch(error => {
 						this.logger.logError(`Async file history AI analysis failed for ${filePath}: ${error}`);
@@ -2428,115 +2429,118 @@ ${index + 1}. 文件: ${fileData.filePath}
 	 * @returns Array of file history commits
 	 */
 	private async getFileCommitHistory(repo: string, filePath: string, maxCommits: number): Promise<GitFileHistoryCommit[]> {
-		// Get commit hashes that modified this file
-		const commitHashes = await this.spawnGit([
-			'log',
-			'--follow',
-			'--format=%H',
-			`--max-count=${maxCommits}`,
-			'--',
-			filePath
-		], repo, (stdout) => {
-			return stdout.trim().split('\n').filter(hash => hash.length > 0);
-		});
-
-		if (commitHashes.length === 0) {
-			return [];
-		}
-
-		// Get detailed information for each commit
-		const commits: GitFileHistoryCommit[] = [];
-
-		for (const hash of commitHashes) {
-			try {
-				// Get commit details
-				const commitDetails = await this.getCommitDetailsBase(repo, hash);
-
-				// Get file change information for this commit
-				const fileChange = await this.getFileChangeInCommit(repo, hash, filePath);
-
-				if (fileChange) {
-					commits.push({
-						hash: commitDetails.hash,
-						parents: commitDetails.parents,
-						author: commitDetails.author,
-						authorEmail: commitDetails.authorEmail,
-						authorDate: commitDetails.authorDate,
-						committer: commitDetails.committer,
-						committerEmail: commitDetails.committerEmail,
-						committerDate: commitDetails.committerDate,
-						message: commitDetails.body,
-						fileChange: fileChange,
-						additions: fileChange.additions,
-						deletions: fileChange.deletions
-					});
-				}
-			} catch (error) {
-				this.logger.logError(`Failed to get details for commit ${hash}: ${error}`);
-			}
-		}
-
-		return commits;
-	}
-
-	/**
-	 * Get file change information for a specific file in a commit
-	 * @param repo The path of the repository
-	 * @param commitHash The commit hash
-	 * @param filePath The file path
-	 * @returns The file change information
-	 */
-	private async getFileChangeInCommit(repo: string, commitHash: string, filePath: string): Promise<GitFileChange | null> {
 		try {
-			const fromCommit = commitHash + '^';
+			// Use a single git log command to get all the information we need at once
+			// Simplified format for better performance
+			const gitOutput = await this.spawnGit([
+				'log',
+				'--follow',
+				'--format=%H|%P|%an|%at|%s', // 简化格式，只获取必要信息
+				'--numstat',
+				`--max-count=${maxCommits}`,
+				'--',
+				filePath
+			], repo, (stdout) => stdout);
 
-			// Get name status and num stat for this specific file
-			const [nameStatusRecords, numStatRecords] = await Promise.all([
-				this.getDiffNameStatus(repo, fromCommit, commitHash).then(records =>
-					records.filter(record =>
-						record.newFilePath === filePath || record.oldFilePath === filePath
-					)
-				),
-				this.getDiffNumStat(repo, fromCommit, commitHash).then(records =>
-					records.filter(record => record.filePath === filePath)
-				)
-			]);
-
-			if (nameStatusRecords.length === 0) {
-				// This might be the initial commit, check if file was added
-				const initialFileCheck = await this.getDiffNameStatus(repo, '', commitHash).then(records =>
-					records.filter(record => record.newFilePath === filePath)
-				);
-
-				if (initialFileCheck.length > 0) {
-					const numStatForInitial = await this.getDiffNumStat(repo, '', commitHash).then(records =>
-						records.filter(record => record.filePath === filePath)
-					);
-
-					return {
-						oldFilePath: initialFileCheck[0].oldFilePath,
-						newFilePath: initialFileCheck[0].newFilePath,
-						type: initialFileCheck[0].type,
-						additions: numStatForInitial.length > 0 ? numStatForInitial[0].additions : null,
-						deletions: numStatForInitial.length > 0 ? numStatForInitial[0].deletions : null
-					};
-				}
-				return null;
+			if (!gitOutput.trim()) {
+				return [];
 			}
 
-			const nameStatus = nameStatusRecords[0];
-			const numStat = numStatRecords.length > 0 ? numStatRecords[0] : null;
+			const commits: GitFileHistoryCommit[] = [];
+			const lines = gitOutput.trim().split('\n');
+			let i = 0;
 
-			return {
-				oldFilePath: nameStatus.oldFilePath,
-				newFilePath: nameStatus.newFilePath,
-				type: nameStatus.type,
-				additions: numStat ? numStat.additions : null,
-				deletions: numStat ? numStat.deletions : null
-			};
+			while (i < lines.length) {
+				const line = lines[i].trim();
+				if (!line) {
+					i++;
+					continue;
+				}
+
+				// Parse commit header line
+				const parts = line.split('|');
+				if (parts.length !== 5) {
+					i++;
+					continue;
+				}
+
+				const [hash, parents, author, authorDate, message] = parts;
+
+				// Skip to next line to find numstat data
+				i++;
+				let additions: number | null = null;
+				let deletions: number | null = null;
+				let changeType: GitFileStatus = GitFileStatus.Modified;
+
+				// Look for numstat data (should be the next non-empty line)
+				while (i < lines.length) {
+					const numStatLine = lines[i].trim();
+					if (!numStatLine) {
+						i++;
+						continue;
+					}
+
+					// Check if this is a new commit line (starts with commit hash pattern)
+					if (numStatLine.includes('|') && numStatLine.split('|').length === 5) {
+						// This is the next commit, don't increment i
+						break;
+					}
+
+					// Parse numstat line: "additions\tdeletions\tfilename"
+					const numStatParts = numStatLine.split('\t');
+					if (numStatParts.length >= 3) {
+						const addStr = numStatParts[0];
+						const delStr = numStatParts[1];
+						const fileName = numStatParts[2];
+
+						// Check if this numstat line is for our file
+						if (fileName === filePath || fileName.endsWith('/' + filePath.split('/').pop())) {
+							additions = addStr === '-' ? null : parseInt(addStr) || 0;
+							deletions = delStr === '-' ? null : parseInt(delStr) || 0;
+
+							// Determine change type based on additions/deletions
+							if (additions !== null && deletions === null) {
+								changeType = GitFileStatus.Added;
+							} else if (additions === null && deletions !== null) {
+								changeType = GitFileStatus.Deleted;
+							} else {
+								changeType = GitFileStatus.Modified;
+							}
+							break;
+						}
+					}
+					i++;
+				}
+
+				// Create the commit object
+				const fileChange: GitFileChange = {
+					oldFilePath: filePath,
+					newFilePath: filePath,
+					type: changeType,
+					additions: additions,
+					deletions: deletions
+				};
+
+				commits.push({
+					hash: hash,
+					parents: parents ? parents.split(' ').filter(p => p.length > 0) : [],
+					author: author,
+					authorEmail: '', // 简化，不获取邮箱
+					authorDate: parseInt(authorDate),
+					committer: author, // 使用author作为committer
+					committerEmail: '', // 简化，不获取邮箱
+					committerDate: parseInt(authorDate), // 使用authorDate作为committerDate
+					message: message,
+					fileChange: fileChange,
+					additions: additions,
+					deletions: deletions
+				});
+			}
+
+			return commits;
 		} catch (error) {
-			this.logger.logError(`Failed to get file change for ${filePath} in commit ${commitHash}: ${error}`);
-			return null;
+			this.logger.logError(`Failed to get file commit history for ${filePath}: ${error}`);
+			return [];
 		}
 	}
 
@@ -2548,12 +2552,19 @@ ${index + 1}. 文件: ${fileData.filePath}
 		commits: GitFileHistoryCommit[]
 	): Promise<void> {
 		try {
+			this.logger.log(`[File History AI] Starting analysis for ${filePath}`);
 			// 分析文件演进模式
 			const analysis = await this.generateFileHistoryAnalysis(filePath, commits, this.logger);
 
+			this.logger.log(`[File History AI] Generated analysis for ${filePath}: ${JSON.stringify(analysis)}`);
+
 			if (analysis) {
+				this.logger.log(`[File History AI] Sending AI analysis update for ${filePath}`);
 				// 发送文件历史AI分析更新消息
 				this.sendFileHistoryAIAnalysisUpdate(filePath, analysis);
+				this.logger.log(`[File History AI] Sent AI analysis update for ${filePath}`);
+			} else {
+				this.logger.log(`[File History AI] No analysis generated for ${filePath}`);
 			}
 		} catch (error) {
 			this.logger.logError(`File history AI analysis failed for ${filePath}: ${error}`);
@@ -2571,6 +2582,7 @@ ${index + 1}. 文件: ${fileData.filePath}
 		try {
 			// 构建文件历史分析提示
 			const prompt = this.buildFileHistoryAnalysisPrompt(filePath, commits);
+			logger.log(`[File History AI] Built prompt for ${filePath}`);
 
 			// 使用专门的文件历史分析服务
 			const analysis = await analyzeFileHistory(
@@ -2579,9 +2591,16 @@ ${index + 1}. 文件: ${fileData.filePath}
 				logger
 			);
 
+			logger.log(`[File History AI] Raw AI service response for ${filePath}: ${JSON.stringify(analysis)}`);
+
 			if (analysis && analysis.summary) {
+				logger.log(`[File History AI] Parsing analysis result for ${filePath}`);
 				// 解析AI分析结果
-				return this.parseFileHistoryAnalysis(analysis.summary);
+				const parsedAnalysis = this.parseFileHistoryAnalysis(analysis.summary);
+				logger.log(`[File History AI] Parsed analysis for ${filePath}: ${JSON.stringify(parsedAnalysis)}`);
+				return parsedAnalysis;
+			} else {
+				logger.log(`[File History AI] No valid analysis received for ${filePath}`);
 			}
 		} catch (error) {
 			logger.logError(`Failed to generate file history analysis: ${error}`);
@@ -2649,91 +2668,134 @@ ${index + 1}. [${date}] ${commit.author}
 	 * Parse file history analysis result
 	 */
 	private parseFileHistoryAnalysis(analysisText: string): FileHistoryAIAnalysis {
-		try {
-			// 尝试解析JSON格式的分析结果
-			const parsed = JSON.parse(analysisText);
+		this.logger.log(`[File History Parse] Attempting to parse analysis text: ${analysisText.substring(0, 200)}...`);
 
-			// 处理recommendations字段，可能是字符串或数组
-			let recommendations: string[];
-			if (typeof parsed.recommendations === 'string') {
-				// 如果是字符串，按句号分割成数组
-				recommendations = parsed.recommendations
-					.split(/[。！？；]/g)
-					.map((item: string) => item.trim())
-					.filter((item: string) => item.length > 0 && item !== '');
-			} else if (Array.isArray(parsed.recommendations)) {
-				recommendations = parsed.recommendations;
-			} else {
-				recommendations = ['建议分析中'];
+		try {
+			// 清理和预处理分析文本
+			let cleanedText = analysisText.trim();
+
+			// 如果文本被包裹在```json```代码块中，提取内容
+			const jsonBlockMatch = cleanedText.match(/```json\s*([\s\S]*?)\s*```/);
+			if (jsonBlockMatch) {
+				cleanedText = jsonBlockMatch[1].trim();
+				this.logger.log(`[File History Parse] Extracted JSON from code block: ${cleanedText.substring(0, 100)}...`);
 			}
 
+			// 尝试解析JSON格式的分析结果
+			const parsed = JSON.parse(cleanedText);
+			this.logger.log(`[File History Parse] Successfully parsed JSON: ${JSON.stringify(parsed)}`);
+
+			// 验证必需字段并提供默认值
+			const summary = parsed.summary || parsed.evolutionSummary || '文件历史分析完成';
+			const evolutionPattern = parsed.evolutionPattern || parsed.pattern || '演进模式分析中';
+
 			// 处理keyChanges字段，可能是字符串或数组
-			let keyChanges: string[];
-			if (typeof parsed.keyChanges === 'string') {
+			let keyChanges: string[] = [];
+			if (Array.isArray(parsed.keyChanges)) {
+				keyChanges = parsed.keyChanges.filter((item: any) => typeof item === 'string' && item.trim() !== '');
+			} else if (typeof parsed.keyChanges === 'string' && parsed.keyChanges.trim() !== '') {
+				// 如果是字符串，按常见分隔符分割成数组
 				keyChanges = parsed.keyChanges
-					.split(/[。！？；]/g)
+					.split(/[,，。！？；\n]/g)
 					.map((item: string) => item.trim())
 					.filter((item: string) => item.length > 0 && item !== '');
-			} else if (Array.isArray(parsed.keyChanges)) {
-				keyChanges = parsed.keyChanges;
-			} else {
+			} else if (Array.isArray(parsed.changes)) {
+				// 备用字段名
+				keyChanges = parsed.changes.filter((item: any) => typeof item === 'string' && item.trim() !== '');
+			}
+
+			// 如果仍然为空，提供默认值
+			if (keyChanges.length === 0) {
 				keyChanges = ['关键变更分析中'];
 			}
 
-			return {
-				summary: parsed.summary || '文件历史分析完成',
-				evolutionPattern: parsed.evolutionPattern || '演进模式分析中',
-				keyChanges: keyChanges,
-				recommendations: recommendations
+			// 处理recommendations字段，可能是字符串或数组
+			let recommendations: string[] = [];
+			if (Array.isArray(parsed.recommendations)) {
+				recommendations = parsed.recommendations.filter((item: any) => typeof item === 'string' && item.trim() !== '');
+			} else if (typeof parsed.recommendations === 'string' && parsed.recommendations.trim() !== '') {
+				// 如果是字符串，按常见分隔符分割成数组
+				recommendations = parsed.recommendations
+					.split(/[,，。！？；\n]/g)
+					.map((item: string) => item.trim())
+					.filter((item: string) => item.length > 0 && item !== '');
+			} else if (Array.isArray(parsed.suggestions)) {
+				// 备用字段名
+				recommendations = parsed.suggestions.filter((item: any) => typeof item === 'string' && item.trim() !== '');
+			}
+
+			// 如果仍然为空，提供默认值
+			if (recommendations.length === 0) {
+				recommendations = ['优化建议分析中'];
+			}
+
+			const result = {
+				summary: summary.substring(0, 300), // 限制长度
+				evolutionPattern: evolutionPattern.substring(0, 200), // 限制长度
+				keyChanges: keyChanges.slice(0, 5), // 最多5个关键变更
+				recommendations: recommendations.slice(0, 5) // 最多5个建议
 			};
+
+			this.logger.log(`[File History Parse] Final parsed result: ${JSON.stringify(result)}`);
+			return result;
 		} catch (error) {
+			this.logger.log(`[File History Parse] JSON parsing failed, attempting text extraction: ${error}`);
+
 			// 如果不是JSON格式，尝试从自然语言文本中提取信息
-			this.logger.log(`[AI Analysis] Failed to parse JSON, extracting from text: ${analysisText.substring(0, 100)}...`);
-
-			// 使用AI返回的文本作为摘要，并生成基于文本的其他字段
-			const summary = analysisText.substring(0, 200);
-
-			// 尝试从文本中提取关键信息
-			const lines = analysisText.split('\n').filter(line => line.trim() !== '');
-			let evolutionPattern = '基于AI分析的演进模式';
-			let keyChanges: string[] = ['AI识别的重要变更'];
-			let recommendations: string[] = ['基于分析的优化建议'];
-
-			// 简单的关键词匹配来提取信息
-			const evolutionKeywords = ['演进', '发展', '变化', '趋势', '模式', '活跃', '频率'];
-			const changeKeywords = ['变更', '修改', '添加', '删除', '重构', '修复', '优化'];
-			const recommendationKeywords = ['建议', '推荐', '应该', '可以', '需要', '优化', '改进'];
-
-			for (const line of lines) {
-				if (evolutionKeywords.some(keyword => line.includes(keyword))) {
-					evolutionPattern = line.trim();
-					break;
-				}
-			}
-
-			// 提取变更相关的内容
-			const changeLines = lines.filter(line =>
-				changeKeywords.some(keyword => line.includes(keyword))
-			).slice(0, 3);
-			if (changeLines.length > 0) {
-				keyChanges = changeLines.map(line => line.trim());
-			}
-
-			// 提取建议相关的内容
-			const recommendationLines = lines.filter(line =>
-				recommendationKeywords.some(keyword => line.includes(keyword))
-			).slice(0, 3);
-			if (recommendationLines.length > 0) {
-				recommendations = recommendationLines.map(line => line.trim());
-			}
-
-			return {
-				summary: summary,
-				evolutionPattern: evolutionPattern,
-				keyChanges: keyChanges,
-				recommendations: recommendations
-			};
+			return this.extractInfoFromText(analysisText);
 		}
+	}
+
+	/**
+	 * Extract analysis information from natural language text when JSON parsing fails
+	 */
+	private extractInfoFromText(analysisText: string): FileHistoryAIAnalysis {
+		this.logger.log(`[File History Parse] Extracting from text: ${analysisText.substring(0, 100)}...`);
+
+		// 使用AI返回的文本作为摘要，并生成基于文本的其他字段
+		const summary = analysisText.substring(0, 300);
+
+		// 尝试从文本中提取关键信息
+		const lines = analysisText.split('\n').filter(line => line.trim() !== '');
+		let evolutionPattern = '基于AI分析的演进模式';
+		let keyChanges: string[] = ['AI识别的重要变更'];
+		let recommendations: string[] = ['基于分析的优化建议'];
+
+		// 简单的关键词匹配来提取信息
+		const evolutionKeywords = ['演进', '发展', '变化', '趋势', '模式', '活跃', '频率', '演化'];
+		const changeKeywords = ['变更', '修改', '添加', '删除', '重构', '修复', '优化', '更新'];
+		const recommendationKeywords = ['建议', '推荐', '应该', '可以', '需要', '优化', '改进', '考虑'];
+
+		// 查找演进模式相关的句子
+		for (const line of lines) {
+			if (evolutionKeywords.some(keyword => line.includes(keyword))) {
+				evolutionPattern = line.trim().substring(0, 200);
+				break;
+			}
+		}
+
+		// 提取变更相关的内容
+		const changeLines = lines.filter(line =>
+			changeKeywords.some(keyword => line.includes(keyword))
+		).slice(0, 3);
+		if (changeLines.length > 0) {
+			keyChanges = changeLines.map(line => line.trim().substring(0, 100));
+		}
+
+		// 提取建议相关的内容
+		const recommendationLines = lines.filter(line =>
+			recommendationKeywords.some(keyword => line.includes(keyword))
+		).slice(0, 3);
+		if (recommendationLines.length > 0) {
+			recommendations = recommendationLines.map(line => line.trim().substring(0, 100));
+		}
+
+		return {
+			summary: summary,
+			evolutionPattern: evolutionPattern,
+			keyChanges: keyChanges,
+			recommendations: recommendations
+		};
 	}
 
 	/**
@@ -2744,6 +2806,16 @@ ${index + 1}. [${date}] ${commit.author}
 			// 使用特殊的格式来标识这是文件历史分析
 			this.aiAnalysisUpdateCallback(`file_history:${filePath}`, null, analysis);
 		}
+	}
+
+	/**
+	 * Trigger async AI analysis for file history
+	 * @param filePath The file path
+	 * @param commits The file history commits
+	 * @returns Promise that resolves when analysis is complete
+	 */
+	public async triggerFileHistoryAIAnalysis(filePath: string, commits: GitFileHistoryCommit[]): Promise<void> {
+		return this.performAsyncFileHistoryAnalysis(filePath, commits);
 	}
 }
 

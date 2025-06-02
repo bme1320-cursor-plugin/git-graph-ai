@@ -34,6 +34,9 @@ export class GitGraphView extends Disposable {
 	private loadRepoInfoRefreshId: number = 0;
 	private loadCommitsRefreshId: number = 0;
 
+	// Add tracking for file history panels
+	private static fileHistoryPanels: Map<string, vscode.WebviewPanel> = new Map();
+
 	/**
 	 * If a Git Graph View already exists, show and update it. Otherwise, create a Git Graph View.
 	 * @param extensionPath The absolute file path of the directory containing the extension.
@@ -88,17 +91,25 @@ export class GitGraphView extends Disposable {
 
 		// Set up AI analysis update callback for DataSource
 		this.dataSource.setAIAnalysisUpdateCallback((commitHash: string, compareWithHash: string | null, aiAnalysis: any) => {
+			this.logger.log(`[AI Callback] Received AI analysis update. CommitHash: ${commitHash}, CompareWithHash: ${compareWithHash}`);
+
 			// Check if this is a file history AI analysis update
 			if (commitHash.startsWith('file_history:')) {
+				const filePath = commitHash.substring('file_history:'.length);
+				this.logger.log(`[AI Callback] This is a file history AI analysis for file: ${filePath}`);
+
 				// Send file history AI analysis update
 				this.sendMessage({
 					command: 'fileHistoryAIAnalysisUpdate',
 					commitHash: commitHash,
 					compareWithHash: compareWithHash,
-					filePath: commitHash.substring('file_history:'.length),
+					filePath: filePath,
 					aiAnalysis: aiAnalysis
 				});
+
+				this.logger.log(`[AI Callback] Sent fileHistoryAIAnalysisUpdate message for file: ${filePath}`);
 			} else {
+				this.logger.log(`[AI Callback] This is a regular commit AI analysis for commit: ${commitHash}`);
 				// Send regular AI analysis update
 				this.sendMessage({
 					command: 'aiAnalysisUpdate',
@@ -663,6 +674,13 @@ export class GitGraphView extends Disposable {
 					error: fileHistoryData.error
 				});
 				break;
+			case 'openFileHistoryInNewTab':
+				// 在新标签页中打开文件历史
+				this.sendMessage({
+					command: 'openFileHistoryInNewTab',
+					error: await this.openFileHistoryInNewTab(msg.repo, msg.filePath)
+				});
+				break;
 		}
 
 		this.repoFileWatcher.unmute();
@@ -686,6 +704,49 @@ export class GitGraphView extends Disposable {
 					}
 				}
 			);
+		}
+
+		// Also send AI analysis updates to file history panels
+		if (msg.command === 'fileHistoryAIAnalysisUpdate') {
+			this.sendMessageToFileHistoryPanels(msg);
+		}
+	}
+
+	/**
+	 * Send AI analysis update messages to file history panels
+	 */
+	private sendMessageToFileHistoryPanels(msg: ResponseMessage) {
+		this.logger.log(`[File History] Checking if message should be sent to file history panels. Command: ${msg.command}`);
+
+		if (msg.command === 'fileHistoryAIAnalysisUpdate' && 'filePath' in msg && 'aiAnalysis' in msg) {
+			this.logger.log(`[File History] Processing fileHistoryAIAnalysisUpdate for file: ${msg.filePath}`);
+			this.logger.log(`[File History] Current file history panels: ${Array.from(GitGraphView.fileHistoryPanels.keys()).join(', ')}`);
+
+			// Find panels that match this file path
+			GitGraphView.fileHistoryPanels.forEach((panel, panelKey) => {
+				const [repo, filePath] = panelKey.split('|');
+				this.logger.log(`[File History] Checking panel ${panelKey}, extracted repo: ${repo}, filePath: ${filePath}, target filePath: ${msg.filePath}`);
+
+				if (filePath === msg.filePath && msg.aiAnalysis) {
+					this.logger.log(`[File History] Found matching panel for ${filePath}, sending update...`);
+					// Send update to the specific file history panel
+					panel.webview.postMessage({
+						command: 'updateAIAnalysis',
+						analysis: msg.aiAnalysis
+					}).then(
+						() => {
+							this.logger.log(`[File History] Successfully sent AI analysis update to file history panel: ${panelKey}`);
+						},
+						(error) => {
+							this.logger.logError(`[File History] Failed to send AI analysis update to file history panel ${panelKey}: ${error}`);
+						}
+					);
+				} else {
+					this.logger.log(`[File History] Panel ${panelKey} does not match or no analysis data`);
+				}
+			});
+		} else {
+			this.logger.log('[File History] Message is not a fileHistoryAIAnalysisUpdate or missing required fields');
 		}
 	}
 
@@ -848,6 +909,453 @@ export class GitGraphView extends Disposable {
 			lastActiveRepo: this.extensionState.getLastActiveRepo(),
 			loadViewTo: loadViewTo
 		});
+	}
+
+	/**
+	 * Opens a new tab to view file history.
+	 * @param repo The repository name.
+	 * @param filePath The file path.
+	 * @returns ErrorInfo if there was an error
+	 */
+	private async openFileHistoryInNewTab(repo: string, filePath: string): Promise<ErrorInfo> {
+		try {
+			// First, quickly get file history without AI analysis
+			const fileHistoryData = await this.dataSource.getFileHistory(repo, filePath, 50, true); // 减少到50个提交，跳过AI分析
+			if (fileHistoryData.error) {
+				return fileHistoryData.error;
+			}
+
+			// Create a unique key for this file history panel
+			const panelKey = `${repo}|${filePath}`;
+
+			// Close existing panel for the same file if it exists
+			const existingPanel = GitGraphView.fileHistoryPanels.get(panelKey);
+			if (existingPanel) {
+				this.logger.log(`[File History Panel] Disposing existing panel for key: ${panelKey}`);
+				existingPanel.dispose();
+			}
+
+			// Create a new webview panel for file history
+			const panel = vscode.window.createWebviewPanel(
+				'git-graph-file-history',
+				`📁 File History - ${filePath.split('/').pop()}`,
+				vscode.ViewColumn.Beside, // Open in a new column
+				{
+					enableScripts: true,
+					localResourceRoots: [vscode.Uri.file(path.join(this.extensionPath, 'media'))],
+					retainContextWhenHidden: true
+				}
+			);
+
+			// Set the icon
+			panel.iconPath = this.getResourcesUri('webview-icon.svg');
+
+			// Generate the webview HTML content (without AI analysis initially)
+			const nonce = getNonce();
+			const fileName = filePath.split('/').pop() || filePath;
+
+			panel.webview.html = this.generateFileHistoryHTML(fileHistoryData, fileName, nonce);
+
+			// Store the panel reference
+			GitGraphView.fileHistoryPanels.set(panelKey, panel);
+			this.logger.log(`[File History Panel] Registered panel with key: ${panelKey}`);
+			this.logger.log(`[File History Panel] Total panels registered: ${GitGraphView.fileHistoryPanels.size}`);
+
+			// Handle webview disposal
+			panel.onDidDispose(() => {
+				this.logger.log(`[File History Panel] Panel disposed: ${panelKey}`);
+				GitGraphView.fileHistoryPanels.delete(panelKey);
+			});
+
+			// Handle messages from the webview (if needed)
+			panel.webview.onDidReceiveMessage((message) => {
+				// Handle any messages from the file history webview if needed
+				this.logger.log(`[File History Panel] Received message from file history panel: ${JSON.stringify(message)}`);
+			});
+
+			// Start async AI analysis after panel is created and shown
+			this.logger.log(`[File History Panel] Starting async AI analysis for ${filePath}`);
+			this.dataSource.triggerFileHistoryAIAnalysis(filePath, fileHistoryData.commits)
+				.then(() => {
+					this.logger.log(`[File History Panel] Completed async AI analysis for ${filePath}`);
+				})
+				.catch((error) => {
+					this.logger.logError(`[File History Panel] Failed async AI analysis for ${filePath}: ${error}`);
+				});
+
+			return null;
+		} catch (error) {
+			return `Failed to open file history: ${error}`;
+		}
+	}
+
+	/**
+	 * Generate HTML content for the file history webview
+	 */
+	private generateFileHistoryHTML(fileHistoryData: any, fileName: string, nonce: string): string {
+		const config = getConfig();
+		let colorVars = '';
+		for (let i = 0; i < config.graph.colours.length; i++) {
+			colorVars += '--git-graph-color' + i + ':' + config.graph.colours[i] + '; ';
+		}
+
+		return `<!DOCTYPE html>
+		<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src data:;">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>File History - ${fileName}</title>
+				<style>
+					:root {
+						${colorVars}
+						--vscode-font-family: var(--vscode-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+						--vscode-editor-font-family: var(--vscode-editor-font-family, "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace);
+					}
+					* { box-sizing: border-box; }
+					body { 
+						margin: 0; 
+						padding: 20px; 
+						font-family: var(--vscode-font-family);
+						background-color: var(--vscode-editor-background, #1e1e1e);
+						color: var(--vscode-editor-foreground, #d4d4d4);
+						line-height: 1.5;
+					} 
+					.container {
+						max-width: 1200px;
+						margin: 0 auto;
+					}
+					.header {
+						margin-bottom: 20px;
+						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+						padding-bottom: 15px;
+					}
+					.title {
+						font-size: 24px;
+						font-weight: 600;
+						margin: 0 0 8px 0;
+					}
+					.path {
+						font-size: 14px;
+						color: var(--vscode-descriptionForeground, #999);
+						font-family: var(--vscode-editor-font-family);
+						margin: 0;
+					}
+					.stats {
+						display: grid;
+						grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+						gap: 15px;
+						margin-bottom: 25px;
+						padding: 15px;
+						background-color: var(--vscode-sideBar-background, #2d2d30);
+						border-radius: 6px;
+						border: 1px solid var(--vscode-editorWidget-border, #454545);
+					}
+					.stat {
+						text-align: center;
+					}
+					.stat-value {
+						display: block;
+						font-size: 24px;
+						font-weight: 700;
+						color: var(--vscode-textLink-foreground, #3794ff);
+						margin-bottom: 4px;
+					}
+					.stat-label {
+						font-size: 11px;
+						color: var(--vscode-descriptionForeground, #999);
+						text-transform: uppercase;
+						letter-spacing: 0.5px;
+					}
+					.content {
+						display: grid;
+						grid-template-columns: 1fr 280px;
+						gap: 25px;
+					}
+					.commits {
+						background-color: var(--vscode-sideBar-background, #2d2d30);
+						border-radius: 6px;
+						border: 1px solid var(--vscode-editorWidget-border, #454545);
+						overflow: hidden;
+						max-height: 60vh;
+						overflow-y: auto;
+					}
+					.commit {
+						padding: 12px 16px;
+						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+						cursor: pointer;
+						transition: background-color 0.15s;
+					}
+					.commit:hover {
+						background-color: var(--vscode-list-hoverBackground, #2a2d2e);
+					}
+					.commit:last-child {
+						border-bottom: none;
+					}
+					.commit-hash {
+						font-family: var(--vscode-editor-font-family);
+						font-size: 11px;
+						color: var(--vscode-textLink-foreground, #3794ff);
+						margin-bottom: 4px;
+					}
+					.commit-message {
+						font-size: 14px;
+						font-weight: 500;
+						margin-bottom: 6px;
+						line-height: 1.3;
+						overflow: hidden;
+						text-overflow: ellipsis;
+						white-space: nowrap;
+					}
+					.commit-meta {
+						font-size: 11px;
+						color: var(--vscode-descriptionForeground, #999);
+						display: flex;
+						justify-content: space-between;
+						align-items: center;
+						margin-bottom: 3px;
+					}
+					.commit-changes {
+						font-size: 10px;
+						color: var(--vscode-descriptionForeground, #999);
+					}
+					.ai-panel {
+						background-color: var(--vscode-sideBar-background, #2d2d30);
+						border-radius: 6px;
+						border: 1px solid var(--vscode-editorWidget-border, #454545);
+						padding: 16px;
+						max-height: 60vh;
+						overflow-y: auto;
+					}
+					.ai-header {
+						display: flex;
+						align-items: center;
+						gap: 8px;
+						margin-bottom: 16px;
+						padding-bottom: 8px;
+						border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+					}
+					.ai-icon {
+						width: 16px;
+						height: 16px;
+						fill: var(--vscode-textLink-foreground, #3794ff);
+					}
+					.ai-title {
+						margin: 0;
+						font-size: 14px;
+						font-weight: 600;
+					}
+					.ai-section {
+						margin-bottom: 16px;
+					}
+					.ai-section h4 {
+						margin: 0 0 8px 0;
+						font-size: 12px;
+						font-weight: 600;
+					}
+					.ai-content {
+						font-size: 12px;
+						line-height: 1.4;
+						background-color: var(--vscode-editor-background, #1e1e1e);
+						padding: 10px;
+						border-radius: 4px;
+						border: 1px solid var(--vscode-editorWidget-border, #454545);
+					}
+					.ai-list {
+						margin: 0;
+						padding-left: 16px;
+						font-size: 12px;
+						line-height: 1.4;
+					}
+					.ai-list li {
+						margin-bottom: 4px;
+					}
+					.ai-loading {
+						text-align: center;
+						color: var(--vscode-descriptionForeground, #999);
+						font-style: italic;
+						padding: 30px 16px;
+						font-size: 13px;
+					}
+					.empty {
+						text-align: center;
+						color: var(--vscode-descriptionForeground, #999);
+						padding: 30px 16px;
+						font-size: 13px;
+					}
+					@media (max-width: 768px) {
+						.content {
+							grid-template-columns: 1fr;
+						}
+						.stats {
+							grid-template-columns: repeat(2, 1fr);
+						}
+					}
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<div class="header">
+						<h1 class="title">📁 File History</h1>
+						<p class="path">${this.escapeHtml(fileHistoryData.filePath)}</p>
+					</div>
+					
+					<div class="stats">
+						<div class="stat">
+							<span class="stat-value">${fileHistoryData.commits.length}</span>
+							<span class="stat-label">Commits</span>
+						</div>
+						<div class="stat">
+							<span class="stat-value">${fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.additions || 0), 0)}</span>
+							<span class="stat-label">Additions</span>
+						</div>
+						<div class="stat">
+							<span class="stat-value">${fileHistoryData.commits.reduce((sum: number, c: any) => sum + (c.deletions || 0), 0)}</span>
+							<span class="stat-label">Deletions</span>
+						</div>
+						<div class="stat">
+							<span class="stat-value">${new Set(fileHistoryData.commits.map((c: any) => c.author)).size}</span>
+							<span class="stat-label">Contributors</span>
+						</div>
+					</div>
+					
+					<div class="content">
+						<div class="commits">
+							${fileHistoryData.commits.length > 0 ?
+		fileHistoryData.commits.map((commit: any) => `
+									<div class="commit">
+										<div class="commit-hash">${commit.hash.substring(0, 8)}</div>
+										<div class="commit-message" title="${this.escapeHtml(commit.message)}">${this.escapeHtml(commit.message.split('\\n')[0])}</div>
+										<div class="commit-meta">
+											<span>${this.escapeHtml(commit.author)}</span>
+											<span>${new Date(commit.authorDate * 1000).toLocaleDateString()}</span>
+										</div>
+										<div class="commit-changes">+${commit.additions || 0} -${commit.deletions || 0}</div>
+									</div>
+								`).join('') :
+		'<div class="empty">No commits found for this file.</div>'
+}
+						</div>
+						
+						<div class="ai-panel">
+							<div id="ai-content">
+								${fileHistoryData.aiAnalysis ? this.generateAIAnalysisHTML(fileHistoryData.aiAnalysis) :
+		'<div class="ai-loading">AI analysis will appear here when available...</div>'
+}
+							</div>
+						</div>
+					</div>
+				</div>
+				
+				<script nonce="${nonce}">
+					const vscode = acquireVsCodeApi();
+					
+					window.updateAIAnalysis = function(analysis) {
+						const container = document.getElementById('ai-content');
+						if (container && analysis) {
+							container.innerHTML = \`
+								<div class="ai-header">
+									<svg class="ai-icon" viewBox="0 0 16 16">
+										<path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
+									</svg>
+									<h3 class="ai-title">AI Analysis</h3>
+								</div>
+								
+								<div class="ai-section">
+									<h4>📋 Evolution Summary</h4>
+									<div class="ai-content">\${escapeHtml(analysis.summary)}</div>
+								</div>
+								
+								<div class="ai-section">
+									<h4>📈 Evolution Pattern</h4>
+									<div class="ai-content">\${escapeHtml(analysis.evolutionPattern)}</div>
+								</div>
+								
+								<div class="ai-section">
+									<h4>🔑 Key Changes</h4>
+									<ul class="ai-list">
+										\${analysis.keyChanges.map(change => \`<li>\${escapeHtml(change)}</li>\`).join('')}
+									</ul>
+								</div>
+								
+								<div class="ai-section">
+									<h4>💡 Recommendations</h4>
+									<ul class="ai-list">
+										\${analysis.recommendations.map(rec => \`<li>\${escapeHtml(rec)}</li>\`).join('')}
+									</ul>
+								</div>
+							\`;
+						}
+					};
+					
+					window.addEventListener('message', event => {
+						const message = event.data;
+						if (message.command === 'updateAIAnalysis' && message.analysis) {
+							window.updateAIAnalysis(message.analysis);
+						}
+					});
+					
+					function escapeHtml(text) {
+						return text
+							.replace(/&/g, '&amp;')
+							.replace(/</g, '&lt;')
+							.replace(/>/g, '&gt;')
+							.replace(/"/g, '&quot;')
+							.replace(/'/g, '&#39;');
+					}
+				</script>
+			</body>
+		</html>`;
+	}
+
+	/**
+	 * Generate AI analysis HTML section
+	 */
+	private generateAIAnalysisHTML(aiAnalysis: any): string {
+		return `
+			<div class="ai-header">
+				<svg class="ai-icon" viewBox="0 0 16 16">
+					<path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8 4.42 0 8-3.58 8-8 0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-3.31 2.69-6 6-6 3.31 0 6 2.69 6 6 0 3.31-2.69 6-6 6z"/>
+				</svg>
+				<h3 class="ai-title">AI Analysis</h3>
+			</div>
+			
+			<div class="ai-section">
+				<h4>📋 Evolution Summary</h4>
+				<div class="ai-content">${this.escapeHtml(aiAnalysis.summary)}</div>
+			</div>
+			
+			<div class="ai-section">
+				<h4>📈 Evolution Pattern</h4>
+				<div class="ai-content">${this.escapeHtml(aiAnalysis.evolutionPattern)}</div>
+			</div>
+			
+			<div class="ai-section">
+				<h4>🔑 Key Changes</h4>
+				<ul class="ai-list">
+					${aiAnalysis.keyChanges.map((change: string) => `<li>${this.escapeHtml(change)}</li>`).join('')}
+				</ul>
+			</div>
+			
+			<div class="ai-section">
+				<h4>💡 Recommendations</h4>
+				<ul class="ai-list">
+					${aiAnalysis.recommendations.map((rec: string) => `<li>${this.escapeHtml(rec)}</li>`).join('')}
+				</ul>
+			</div>
+		`;
+	}
+
+	/**
+	 * Escape HTML special characters
+	 */
+	private escapeHtml(text: string): string {
+		return text
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
 	}
 }
 

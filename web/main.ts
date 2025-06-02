@@ -3672,11 +3672,12 @@ class GitGraphView {
 	 * @param filePath The path of the file
 	 */
 	public showFileHistory(filePath: string) {
-		if (FileHistoryView.currentView) {
-			FileHistoryView.currentView.close();
-		}
-
-		FileHistoryView.currentView = new FileHistoryView(this.currentRepo, filePath);
+		// 发送消息到后端，在新标签页中打开文件历史
+		sendMessage({
+			command: 'openFileHistoryInNewTab',
+			repo: this.currentRepo,
+			filePath: filePath
+		});
 	}
 }
 

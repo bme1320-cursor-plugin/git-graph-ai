@@ -1306,6 +1306,15 @@ export interface GitFileHistoryData {
 	readonly error: ErrorInfo;
 }
 
+export interface RequestOpenFileHistoryInNewTab extends RepoRequest {
+	readonly command: 'openFileHistoryInNewTab';
+	readonly filePath: string;
+}
+
+export interface ResponseOpenFileHistoryInNewTab extends ResponseWithErrorInfo {
+	readonly command: 'openFileHistoryInNewTab';
+}
+
 export type RequestMessage =
 	RequestAddRemote
 	| RequestAddTag
@@ -1345,6 +1354,7 @@ export type RequestMessage =
 	| RequestOpenExternalDirDiff
 	| RequestOpenExternalUrl
 	| RequestOpenFile
+	| RequestOpenFileHistoryInNewTab
 	| RequestOpenTerminal
 	| RequestPopStash
 	| RequestPruneRemote
@@ -1409,6 +1419,7 @@ export type ResponseMessage =
 	| ResponseOpenExternalDirDiff
 	| ResponseOpenExternalUrl
 	| ResponseOpenFile
+	| ResponseOpenFileHistoryInNewTab
 	| ResponseOpenTerminal
 	| ResponsePopStash
 	| ResponsePruneRemote

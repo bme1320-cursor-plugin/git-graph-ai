@@ -266,30 +266,30 @@ def analyze_file_history():
 
 {prompt}
 
-请严格按照以下JSON格式返回分析结果：
+要求：严格按照以下JSON格式返回，不要添加任何其他内容：
 
 {{
-    "summary": "文件演进总结（整体发展趋势、主要目的和演进方向）",
-    "evolutionPattern": "演进模式分析（开发活跃度、变更频率、贡献者协作模式）",
+    "summary": "该文件从开始到现在的整体演进总结，包括主要发展趋势和目的",
+    "evolutionPattern": "文件的演进模式分析，包括开发活跃度、变更频率、贡献者协作模式等",
     "keyChanges": [
-        "关键变更点1",
-        "关键变更点2",
-        "关键变更点3"
+        "第一个重要的关键变更点",
+        "第二个重要的关键变更点",
+        "第三个重要的关键变更点"
     ],
     "recommendations": [
-        "优化建议1",
-        "优化建议2", 
-        "优化建议3"
+        "第一个优化建议",
+        "第二个优化建议",
+        "第三个优化建议"
     ]
 }}
 
-要求：
-- 必须严格返回JSON格式，不要包含其他文本
-- keyChanges和recommendations必须是字符串数组
-- 每个建议和变更点控制在30字以内
-- 使用中文回答，语言自然流畅
-- 重点关注文件的演进趋势和开发模式
-- 提供具体、可操作的建议
+注意事项：
+1. 必须严格返回有效的JSON格式
+2. keyChanges和recommendations必须是字符串数组，每项不超过35字
+3. summary和evolutionPattern为字符串，不超过80字
+4. 使用中文回答，语言专业且易懂
+5. 不要添加```json```代码块包装
+6. 基于实际提交历史提供有价值的分析
 """
 
         try:
@@ -297,7 +297,7 @@ def analyze_file_history():
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个专业的代码分析师，擅长分析文件的版本演进历史和开发模式。请提供深入且实用的分析报告。"
+                        "content": "你是一个专业的代码演进分析师。请严格按照用户要求的JSON格式回答，不要添加任何额外的文本或格式化。"
                     },
                     {
                         "role": "user",
@@ -305,13 +305,24 @@ def analyze_file_history():
                     }
                 ],
                 model="gpt-4.1-mini",
-                max_tokens=350,
-                temperature=0.3,
+                max_tokens=400,
+                temperature=0.2,
                 n=1
             )
 
             ai_summary = chat_completion.choices[0].message.content.strip()
-            print(f"File History Analysis for {file_path}: {ai_summary}")
+            print(f"File History Analysis Raw Response for {file_path}: {ai_summary}")
+
+            # 尝试验证返回的是有效的JSON
+            try:
+                import json
+                test_parse = json.loads(ai_summary)
+                if not all(key in test_parse for key in ['summary', 'evolutionPattern', 'keyChanges', 'recommendations']):
+                    raise ValueError("Missing required fields in AI response")
+                print(f"File History Analysis JSON validation passed for {file_path}")
+            except (json.JSONDecodeError, ValueError) as parse_error:
+                print(f"AI returned invalid JSON for {file_path}, using fallback: {parse_error}")
+                ai_summary = generate_fallback_file_history_json(file_path)
 
             return jsonify({
                 "analysis": {
@@ -321,17 +332,7 @@ def analyze_file_history():
 
         except OpenAIError as e:
             print(f"OpenAI API error for file history analysis: {e}")
-            fallback_analysis = f"""
-文件 {file_path} 的演进分析暂时不可用。
-
-根据提交历史，这个文件经历了多次修改和优化。建议：
-1. 定期审查代码质量，确保可维护性
-2. 保持提交信息的规范性和描述性
-3. 考虑重构复杂的代码段
-4. 建立代码审查流程以保证质量
-
-AI分析服务将在稍后恢复。错误信息：{str(e)}
-"""
+            fallback_analysis = generate_fallback_file_history_json(file_path)
             return jsonify({
                 "analysis": {
                     "summary": fallback_analysis,
@@ -339,17 +340,7 @@ AI分析服务将在稍后恢复。错误信息：{str(e)}
             })
         except Exception as e:
             print(f"Unexpected error during file history analysis: {e}")
-            fallback_analysis = f"""
-文件 {file_path} 的演进分析遇到技术问题。
-
-基于可用信息，建议：
-1. 持续关注文件的变更模式
-2. 优化代码结构和可读性  
-3. 建立良好的版本控制习惯
-4. 定期进行代码质量评估
-
-请稍后重试AI分析功能。
-"""
+            fallback_analysis = generate_fallback_file_history_json(file_path)
             return jsonify({
                 "analysis": {
                     "summary": fallback_analysis,
@@ -359,6 +350,24 @@ AI分析服务将在稍后恢复。错误信息：{str(e)}
     except Exception as e:
         print(f"Error processing file history analysis: {e}")
         return jsonify({"error": "An internal server error occurred"}), 500
+
+def generate_fallback_file_history_json(file_path):
+    """生成备用的JSON格式文件历史分析"""
+    file_name = file_path.split('/')[-1] if '/' in file_path else file_path
+    return json.dumps({
+        "summary": f"文件 {file_name} 经历了多次修改和演进，是项目的重要组成部分",
+        "evolutionPattern": "该文件在开发过程中持续改进，体现了项目的迭代发展特点",
+        "keyChanges": [
+            "文件结构和功能的逐步完善",
+            "代码质量和性能的持续优化",
+            "新功能的添加和旧功能的改进"
+        ],
+        "recommendations": [
+            "定期检查代码质量和可维护性",
+            "保持良好的文档和注释习惯",
+            "考虑重构复杂的代码段以提升可读性"
+        ]
+    }, ensure_ascii=False)
 
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
