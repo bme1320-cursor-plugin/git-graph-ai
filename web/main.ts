@@ -176,23 +176,30 @@ function generateFileTreeHtml(folder: FileTreeFolder, lastViewedFile: string | n
 			const isLastViewed = lastViewedFile === file.newFilePath;
 			const isContextMenuOpen = contextMenuOpen === item.index;
 			const fileClass = item.reviewed ? '' : ' pendingReview';
-			const diffPossible = file.type !== GG.GitFileStatus.Untracked && (file.additions !== null || file.deletions !== null);
+			const textFile = file.additions !== null && file.deletions !== null;
+			const diffPossible = file.type === GG.GitFileStatus.Untracked || textFile;
 
-			html += `<li class="fileTreeFileRecord${fileClass}${isContextMenuOpen ? ' contextMenuActive' : ''}" data-index="${item.index}">
-				<div class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}">
-					<span class="fileTreeFileIcon">
-						${SVG_ICONS.file}
+			// Generate change type message for tooltip
+			const changeTypeMessage = getFileTypeText(file.type) + (file.type === GG.GitFileStatus.Renamed ? ` (${escapeHtml(file.oldFilePath || '')} → ${escapeHtml(file.newFilePath)})` : '');
+
+			html += `<li data-pathseg="${encodeURIComponent(item.name)}">
+				<span class="fileTreeFileRecord${isContextMenuOpen ? ' contextMenuActive' : ''}${fileClass}" data-index="${item.index}">
+					<span class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}${fileClass}" title="${diffPossible ? 'Click to View Diff' : 'Unable to View Diff' + (file.type !== GG.GitFileStatus.Deleted ? ' (this is a binary file)' : '')} • ${changeTypeMessage}">
+						<span class="fileTreeFileIcon">${SVG_ICONS.file}</span>
+						<span class="gitFileName ${file.type}">${escapeHtml(item.name)}</span>
 					</span>
-					<span class="gitFileName ${file.type}">${escapeHtml(item.name)}</span>
+					${initialState.config.enhancedAccessibility ? `<span class="fileTreeFileType" title="${changeTypeMessage}">${file.type}</span>` : ''}
+					${file.type !== GG.GitFileStatus.Added && file.type !== GG.GitFileStatus.Untracked && file.type !== GG.GitFileStatus.Deleted && textFile ? `<span class="fileTreeFileAddDel">(<span class="fileTreeFileAdd" title="${file.additions} addition${file.additions !== 1 ? 's' : ''}">+${file.additions}</span>|<span class="fileTreeFileDel" title="${file.deletions} deletion${file.deletions !== 1 ? 's' : ''}">-${file.deletions}</span>)</span>` : ''}
 					${isLastViewed ? `<span id="cdvLastFileViewed" title="Last File Viewed">${SVG_ICONS.eyeOpen}</span>` : ''}
 					${generateFileActionsHtml(file, isUncommitted)}
-					${generateFileStatsHtml(file)}
-				</div>
+				</span>
 			</li>`;
 		} else if (item.type === 'repo') {
-			html += `<li class="fileTreeRepo" data-path="${encodeURIComponent(item.path)}">
-				<span class="fileTreeRepoIcon">${SVG_ICONS.package}</span>
-				<span class="gitRepoName">${escapeHtml(item.name)}</span>
+			html += `<li data-pathseg="${encodeURIComponent(item.name)}">
+				<span class="fileTreeRepo" data-path="${encodeURIComponent(item.path)}" title="Click to View Repository">
+					<span class="fileTreeRepoIcon">${SVG_ICONS.closedFolder}</span>
+					${escapeHtml(item.name)}
+				</span>
 			</li>`;
 		}
 	}
@@ -205,57 +212,39 @@ function generateFileListHtml(gitFiles: ReadonlyArray<GG.GitFileChange>, lastVie
 		const file = gitFiles[i];
 		const isLastViewed = lastViewedFile === file.newFilePath;
 		const isContextMenuOpen = contextMenuOpen === i;
-		const diffPossible = file.type !== GG.GitFileStatus.Untracked && (file.additions !== null || file.deletions !== null);
+		const textFile = file.additions !== null && file.deletions !== null;
+		const diffPossible = file.type === GG.GitFileStatus.Untracked || textFile;
 
-		html += `<li class="fileTreeFileRecord${isContextMenuOpen ? ' contextMenuActive' : ''}" data-index="${i}">
-			<div class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}">
-				<span class="fileTreeFileIcon">
-					${SVG_ICONS.file}
+		// Generate change type message for tooltip
+		const changeTypeMessage = getFileTypeText(file.type) + (file.type === GG.GitFileStatus.Renamed ? ` (${escapeHtml(file.oldFilePath || '')} → ${escapeHtml(file.newFilePath)})` : '');
+
+		html += `<li data-pathseg="${encodeURIComponent(file.newFilePath)}">
+			<span class="fileTreeFileRecord${isContextMenuOpen ? ' contextMenuActive' : ''}" data-index="${i}">
+				<span class="fileTreeFile${diffPossible ? ' gitDiffPossible' : ''}" title="${diffPossible ? 'Click to View Diff' : 'Unable to View Diff' + (file.type !== GG.GitFileStatus.Deleted ? ' (this is a binary file)' : '')} • ${changeTypeMessage}">
+					<span class="fileTreeFileIcon">${SVG_ICONS.file}</span>
+					<span class="gitFileName ${file.type}">${escapeHtml(file.newFilePath)}</span>
 				</span>
-				<span class="gitFileName ${file.type}">${escapeHtml(file.newFilePath)}</span>
+				${initialState.config.enhancedAccessibility ? `<span class="fileTreeFileType" title="${changeTypeMessage}">${file.type}</span>` : ''}
+				${file.type !== GG.GitFileStatus.Added && file.type !== GG.GitFileStatus.Untracked && file.type !== GG.GitFileStatus.Deleted && textFile ? `<span class="fileTreeFileAddDel">(<span class="fileTreeFileAdd" title="${file.additions} addition${file.additions !== 1 ? 's' : ''}">+${file.additions}</span>|<span class="fileTreeFileDel" title="${file.deletions} deletion${file.deletions !== 1 ? 's' : ''}">-${file.deletions}</span>)</span>` : ''}
 				${isLastViewed ? `<span id="cdvLastFileViewed" title="Last File Viewed">${SVG_ICONS.eyeOpen}</span>` : ''}
 				${generateFileActionsHtml(file, isUncommitted)}
-				${generateFileStatsHtml(file)}
-			</div>
+			</span>
 		</li>`;
 	}
 	return `<ul>${html}</ul>`;
 }
 
 function generateFileActionsHtml(file: GG.GitFileChange, isUncommitted: boolean): string {
-	const fileExists = file.type !== GG.GitFileStatus.Deleted;
-	let html = '';
+	let html = `<span class="copyGitFile fileTreeFileAction" title="Copy Absolute File Path to Clipboard">${SVG_ICONS.copy}</span>`;
 
-	if (fileExists) {
-		html += `<span class="fileTreeFileAction copyGitFile" title="Copy File Path to Clipboard">${SVG_ICONS.copy}</span>`;
-		if (!isUncommitted) {
-			html += `<span class="fileTreeFileAction viewGitFileAtRevision" title="View File at this Revision">${SVG_ICONS.eyeOpen}</span>`;
+	if (file.type !== GG.GitFileStatus.Deleted) {
+		const textFile = file.additions !== null && file.deletions !== null;
+		const diffPossible = file.type === GG.GitFileStatus.Untracked || textFile;
+
+		if (diffPossible && !isUncommitted) {
+			html += `<span class="viewGitFileAtRevision fileTreeFileAction" title="View File at this Revision">${SVG_ICONS.commit}</span>`;
 		}
-		html += `<span class="fileTreeFileAction openGitFile" title="Open File">${SVG_ICONS.openFile}</span>`;
-	}
-
-	return html;
-}
-
-function generateFileStatsHtml(file: GG.GitFileChange): string {
-	let html = '';
-
-	// Add file type indicator
-	const typeText = getFileTypeText(file.type);
-	if (typeText) {
-		html += `<span class="fileTreeFileType" title="${typeText}">${file.type}</span>`;
-	}
-
-	// Add additions/deletions
-	if (file.additions !== null || file.deletions !== null) {
-		html += '<span class="fileTreeFileAddDel">';
-		if (file.additions !== null && file.additions > 0) {
-			html += `<span class="fileTreeFileAdd" title="${file.additions} addition${file.additions === 1 ? '' : 's'}">+${file.additions}</span>`;
-		}
-		if (file.deletions !== null && file.deletions > 0) {
-			html += `<span class="fileTreeFileDel" title="${file.deletions} deletion${file.deletions === 1 ? '' : 's'}">-${file.deletions}</span>`;
-		}
-		html += '</span>';
+		html += `<span class="openGitFile fileTreeFileAction" title="Open File">${SVG_ICONS.openFile}</span>`;
 	}
 
 	return html;
@@ -3550,7 +3539,7 @@ class GitGraphView {
 				],
 				[
 					{
-						title: '查看文件历史',
+						title: 'View File History',
 						visible: true,
 						onClick: () => this.showFileHistory(file.newFilePath)
 					}
