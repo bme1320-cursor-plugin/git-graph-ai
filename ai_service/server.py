@@ -3,10 +3,13 @@
 import os
 import json
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from openai import OpenAI, OpenAIError
 
 app = Flask(__name__)
 
+# 配置CORS以允许跨域访问
+# CORS(app, origins=['*'])  # 生产环境建议指定具体域名
 
 # --- OpenAI Client Initialization ---
 openai_client = None
@@ -530,11 +533,38 @@ def analyze_batch():
 
 if __name__ == '__main__':
     print("Starting AI Analysis Server...")
-    print(f"Health check available at: http://127.0.0.1:5111/health")
-    print(f"Analysis endpoint available at: http://127.0.0.1:5111/analyze_diff")
-    print(f"File history analysis endpoint available at: http://127.0.0.1:5111/analyze_file_history")
-    print(f"File version comparison analysis endpoint available at: http://127.0.0.1:5111/analyze_file_version_comparison")
-    print(f"Batch analysis endpoint available at: http://127.0.0.1:5111/analyze_batch")
+    print("="*50)
+    print("🔧 服务器配置:")
+    print(f"   - 本地访问: http://127.0.0.1:5111")
+    print(f"   - 局域网访问: http://[你的内网IP]:5111") 
+    print(f"   - 外网访问: http://[你的公网IP]:5111")
+    print("="*50)
+    print("📍 可用端点:")
+    print(f"   - 健康检查: /health")
+    print(f"   - 差异分析: /analyze_diff") 
+    print(f"   - 文件历史: /analyze_file_history")
+    print(f"   - 版本比较: /analyze_file_version_comparison")
+    print(f"   - 批量分析: /analyze_batch")
+    print("="*50)
+    print("⚠️  安全提示:")
+    print("   - 当前配置允许所有IP访问")
+    print("   - 生产环境请配置防火墙规则")
+    print("   - 建议设置API访问限制")
+    print("="*50)
+    
+    # 获取并显示本机IP地址
+    try:
+        import socket
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        print(f"🌐 本机IP地址: {local_ip}")
+        print(f"   局域网访问链接: http://{local_ip}:5111/health")
+    except:
+        print("🌐 无法获取本机IP，请手动查看")
+    
+    print("="*50)
+    print("🚀 服务器启动中...")
+    
     # Note: Use '0.0.0.0' to be accessible from the extension container
     # Use a specific port, e.g., 5111
-    app.run(host='0.0.0.0', port=5111, debug=True) # Set debug=False for production 
+    app.run(host='0.0.0.0', port=5111, debug=True)  # 生产环境建议debug=False 

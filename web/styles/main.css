@@ -392,15 +392,26 @@ code{
 	overflow-x:hidden;
 	overflow-y:auto;
 }
-#cdvDivider{
+.cdvDivider{
 	position:absolute;
+	top:0;
+	bottom:0;
 	width:6px;
 	cursor:col-resize;
+	background-color:transparent;
+	border-left:1px solid rgba(128,128,128,0.3);
+	border-right:1px solid rgba(128,128,128,0.3);
+	transition:background-color 0.2s ease;
 }
-#cdvDivider.left {
+.cdvDivider:hover{
+	background-color:rgba(128,128,128,0.2);
+	border-left-color:rgba(128,128,128,0.5);
+	border-right-color:rgba(128,128,128,0.5);
+}
+#cdvDividerLeft {
 	left:33%;
 }
-#cdvDivider.right {
+#cdvDividerRight {
 	left:66%;
 }
 #cdvSummary {
@@ -564,7 +575,7 @@ code{
 #cdv.inline #cdvContent{
 	border-left:1px solid rgba(128,128,128,0.2);
 }
-#cdv.inline #cdvDivider{
+#cdv.inline .cdvDivider{
 	top:0;
 	bottom:6px;
 }
@@ -577,7 +588,7 @@ code{
 	top:2px;
 	bottom:0;
 }
-#cdv.docked #cdvDivider{
+#cdv.docked .cdvDivider{
 	top:6px;
 	bottom:0;
 }

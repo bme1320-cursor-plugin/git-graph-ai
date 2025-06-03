@@ -108,7 +108,7 @@ export function analyzeDiff(
 				'Content-Type': 'application/json',
 				'Content-Length': Buffer.byteLength(postData)
 			},
-			timeout: 30000 
+			timeout: 30000
 		};
 
 		logger?.log(`[AI Service] Sending request to analyze diff for: ${filePath}`);

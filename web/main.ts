@@ -2867,8 +2867,8 @@ class GitGraphView {
 			html += '</div>' +
                 '<div id="cdvFiles">' + generateFileViewHtml(expandedCommit.fileTree!, expandedCommit.fileChanges!, expandedCommit.lastViewedFile, expandedCommit.contextMenuOpen.fileView, this.getFileViewType(), commitOrder.to === UNCOMMITTED) + '</div>' +
                 '<div id="cdvAiSummary">' + this.generateAiAnalysisHtml(expandedCommit) + '</div>' +
-                '<div id="cdvDivider" class="left"></div>' +
-                '<div id="cdvDivider" class="right"></div>';
+                '<div id="cdvDividerLeft" class="cdvDivider left"></div>' +
+                '<div id="cdvDividerRight" class="cdvDivider right"></div>';
 		}
 		html += '</div><div id="cdvControls"><div id="cdvClose" class="cdvControlBtn" title="Close">' + SVG_ICONS.close + '</div>' +
 			(codeReviewPossible ? '<div id="cdvCodeReview" class="cdvControlBtn">' + SVG_ICONS.review + '</div>' : '') +
@@ -3107,8 +3107,8 @@ class GitGraphView {
 
 		// 获取所有相关元素
 		let summaryElem = document.getElementById('cdvSummary'),
-			leftDividerElem = document.querySelector('#cdvDivider.left') as HTMLElement,
-			rightDividerElem = document.querySelector('#cdvDivider.right') as HTMLElement,
+			leftDividerElem = document.getElementById('cdvDividerLeft'),
+			rightDividerElem = document.getElementById('cdvDividerRight'),
 			filesElem = document.getElementById('cdvFiles'),
 			aiSummaryElem = document.getElementById('cdvAiSummary');
 
@@ -3222,9 +3222,10 @@ class GitGraphView {
 		};
 
 		// 设置左侧分隔线的拖动事件
-		const leftDivider = document.querySelector('#cdvDivider.left');
+		const leftDivider = document.getElementById('cdvDividerLeft');
 		if (leftDivider) {
-			leftDivider.addEventListener('mousedown', () => {
+			leftDivider.addEventListener('mousedown', (e) => {
+				e.preventDefault(); // 防止默认行为
 				const contentElem = document.getElementById('cdvContent');
 				if (contentElem === null) return;
 
@@ -3237,9 +3238,10 @@ class GitGraphView {
 		}
 
 		// 设置右侧分隔线的拖动事件
-		const rightDivider = document.querySelector('#cdvDivider.right');
+		const rightDivider = document.getElementById('cdvDividerRight');
 		if (rightDivider) {
-			rightDivider.addEventListener('mousedown', () => {
+			rightDivider.addEventListener('mousedown', (e) => {
+				e.preventDefault(); // 防止默认行为
 				const contentElem = document.getElementById('cdvContent');
 				if (contentElem === null) return;
 
@@ -3692,9 +3694,10 @@ function initializeGitGraphView() {
 	if (viewElem) {
 		gitGraphView = new GitGraphView(viewElem, null);
 
-		// Initialize global dialog and contextMenu instances
+		// Initialize global dialog, contextMenu, and eventOverlay instances
 		dialog = new Dialog();
 		contextMenu = new ContextMenu();
+		eventOverlay = new EventOverlay();
 	}
 }
 
