@@ -11,6 +11,7 @@ import { GitExecutable, GitVersionRequirement, UNABLE_TO_FIND_GIT_MSG, UNCOMMITT
 import { Disposable } from './utils/disposable';
 import { Event } from './utils/event';
 import { analyzeDiff, analyzeFileHistory, analyzeFileVersionComparison } from './aiService';
+import { FileTypeDetector } from './fileTypeDetector';
 
 const DRIVE_LETTER_PATH_REGEX = /^[a-z]:\//;
 const EOL_REGEX = /\r\n|\r|\n/g;
@@ -394,8 +395,15 @@ export class DataSource extends Disposable {
 			this.logger.log(`[AI Analysis Flow] 📊 Input data - Repo: ${repo}, FromCommit: ${fromCommit}, FileChanges: ${commitDetails.fileChanges?.length || 0}`);
 			this.logger.log(`[AI Analysis Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}, Timeout: ${aiConfig.timeout}`);
 
-			const eligibleFiles = commitDetails.fileChanges
-				.filter((fileChange: any) => this.isFileEligibleForAIAnalysis(fileChange, aiConfig))
+			// 使用智能文件类型检测器来过滤符合条件的文件
+			const eligibleFilePromises = commitDetails.fileChanges.map(async (fileChange: any) => {
+				const isEligible = await this.isFileEligibleForAIAnalysis(fileChange, aiConfig, repo);
+				return isEligible ? fileChange : null;
+			});
+
+			const eligibleFileResults = await Promise.all(eligibleFilePromises);
+			const eligibleFiles = eligibleFileResults
+				.filter((fileChange): fileChange is any => fileChange !== null)
 				.slice(0, aiConfig.maxFilesPerAnalysis);
 
 			// 数据流调试：记录文件过滤结果
@@ -651,7 +659,13 @@ export class DataSource extends Disposable {
 			this.logger.log(`[AI Comparison Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}`);
 
 			// 获取符合AI分析条件的文件
-			const eligibleFiles = fileChanges.filter(file => this.isFileEligibleForAIAnalysis(file, aiConfig));
+			const eligibleFilePromises = fileChanges.map(async (file) => {
+				const isEligible = await this.isFileEligibleForAIAnalysis(file, aiConfig, repo);
+				return isEligible ? file : null;
+			});
+
+			const eligibleFileResults = await Promise.all(eligibleFilePromises);
+			const eligibleFiles = eligibleFileResults.filter((file): file is GitFileChange => file !== null);
 
 			// 数据流调试：记录文件过滤结果
 			this.logger.log(`[AI Comparison Flow] 🔍 File filtering - Total: ${fileChanges.length}, Eligible: ${eligibleFiles.length}, Max allowed: ${aiConfig.maxFilesPerAnalysis}`);
@@ -2447,26 +2461,56 @@ ${index + 1}. 文件: ${fileData.filePath}
 	}
 
 	/**
-	 * Check if a file is eligible for AI analysis based on configuration
+	 * Check if a file is eligible for AI analysis based on intelligent detection
 	 * @param fileChange The file change to check
 	 * @param aiConfig AI analysis configuration
-	 * @returns True if the file should be analyzed
+	 * @param repo Repository path for content-based detection
+	 * @returns Promise<boolean> True if the file should be analyzed
 	 */
-	private isFileEligibleForAIAnalysis(fileChange: GitFileChange, aiConfig: any): boolean {
+	private async isFileEligibleForAIAnalysis(fileChange: GitFileChange, aiConfig: any, repo?: string): Promise<boolean> {
 		// 只分析修改和重命名的文件
 		if (fileChange.type !== GitFileStatus.Modified && fileChange.type !== GitFileStatus.Renamed) {
 			return false;
 		}
 
-		const filePath = fileChange.newFilePath.toLowerCase();
+		const filePath = fileChange.newFilePath;
 
-		// 检查是否在排除列表中
-		if (aiConfig.excludedFileExtensions.some((ext: string) => filePath.endsWith(ext.toLowerCase()))) {
-			return false;
+		// 使用新的智能文件类型检测器
+		try {
+			const useIntelligentDetection = aiConfig.useIntelligentFileDetection !== false; // 默认启用
+			const isEligible = await FileTypeDetector.isFileEligibleForAnalysis(filePath, repo, useIntelligentDetection);
+
+			// 如果智能检测认为不符合，但用户明确在支持列表中配置了，仍然分析
+			if (!isEligible && aiConfig.supportedFileExtensions) {
+				const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+				if (aiConfig.supportedFileExtensions.some((supportedExt: string) => ext === supportedExt.toLowerCase())) {
+					return true;
+				}
+			}
+
+			// 检查排除列表
+			if (aiConfig.excludedFileExtensions) {
+				const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+				if (aiConfig.excludedFileExtensions.some((excludedExt: string) => ext === excludedExt.toLowerCase())) {
+					return false;
+				}
+			}
+
+			return isEligible;
+		} catch (error) {
+			// 如果智能检测失败，回退到原始的扩展名检测
+			this.logger.log(`Intelligent file detection failed for ${filePath}, falling back to extension-based detection: ${error}`);
+
+			const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
+
+			// 检查排除列表
+			if (aiConfig.excludedFileExtensions && aiConfig.excludedFileExtensions.some((excludedExt: string) => ext === excludedExt.toLowerCase())) {
+				return false;
+			}
+
+			// 检查支持列表
+			return aiConfig.supportedFileExtensions && aiConfig.supportedFileExtensions.some((supportedExt: string) => ext === supportedExt.toLowerCase());
 		}
-
-		// 检查是否在支持列表中
-		return aiConfig.supportedFileExtensions.some((ext: string) => filePath.endsWith(ext.toLowerCase()));
 	}
 
 	/**
