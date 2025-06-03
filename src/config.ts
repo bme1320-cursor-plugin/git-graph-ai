@@ -625,7 +625,7 @@ class Config {
 				'.pdf', '.zip', '.tar', '.gz', '.exe', '.dll', '.so', '.dylib',
 				'.bin', '.obj', '.class', '.jar', '.war', '.ear', '.aar'
 			]),
-			timeout: config.get('aiAnalysis.timeout', 10000),
+			timeout: config.get('aiAnalysis.timeout', 30000),
 			batchSize: config.get('aiAnalysis.batchSize', 10),
 			cache: {
 				enabled: config.get('aiAnalysis.cache.enabled', true),

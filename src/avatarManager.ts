@@ -45,7 +45,7 @@ export class AvatarManager extends Disposable {
 			this.interval = setInterval(() => {
 				// Fetch avatars every 10 seconds
 				this.fetchAvatarsInterval();
-			}, 10000);
+			}, 30000);
 			this.fetchAvatarsInterval();
 		});
 

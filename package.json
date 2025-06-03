@@ -35,6 +35,10 @@
 	"extensionKind": [
 		"workspace"
 	],
+	"activationEvents": [
+		"onCommand:git-graph.view",
+		"onView:scm"
+	],
 
 	"main": "./out/src/extension.js",
 	"contributes": {
@@ -1166,9 +1170,9 @@
 				},
 				"git-graph.aiAnalysis.timeout": {
 					"type": "number",
-					"default": 10000,
+					"default": 30000,
 					"minimum": 3000,
-					"maximum": 30000,
+					"maximum": 100000,
 					"description": "Timeout in milliseconds for AI analysis requests."
 				},
 				"git-graph.aiAnalysis.batchSize": {
@@ -1607,7 +1611,7 @@
 		"compile-web": "tsc -p ./web && node ./.vscode/package-web.js",
 		"compile-web-debug": "tsc -p ./web && node ./.vscode/package-web.js debug",
 		"lint": "eslint -c .eslintrc.json --max-warnings 0 --ext .ts ./src ./tests ./web",
-		"package": "npm exec vsce package --no-dependencies",
+		"package": "npm exec vsce package",
 		"package-and-install": "npm run package && node ./.vscode/install-package.js",
 		"test": "jest --verbose",
 		"test-and-report-coverage": "jest --verbose --coverage"
