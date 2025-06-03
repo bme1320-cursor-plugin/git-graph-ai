@@ -2,15 +2,21 @@ import * as http from 'http';
 import { Logger } from './logger';
 import { AiCacheManager } from './aiCache';
 
-// Define the structure for the AI analysis result
+// Define the structure for the AI analysis result with enhanced error handling
 export interface AIAnalysis {
-    summary: string;
+    summary?: string;
+    error?: string;
+    errorType?: 'timeout' | 'service_unavailable' | 'authentication_failed' | 'rate_limited' | 'invalid_response' | 'unknown_error';
+    technicalError?: string;
+    status?: 'analyzing' | 'completed' | 'error';
     // Potentially add more fields later, e.g., semantic_highlights: any[];
 }
 
 const AI_SERVICE_HOST = '127.0.0.1'; // Use 127.0.0.1 instead of localhost for clarity
 const AI_SERVICE_PORT = 5111;
 const AI_SERVICE_PATH = '/analyze_diff';
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+const MAX_RETRIES = 2;
 
 // 全局缓存管理器实例
 let cacheManager: AiCacheManager | null = null;
@@ -58,12 +64,14 @@ export async function clearCache(): Promise<void> {
 }
 
 /**
- * Calls the Python AI service to analyze a file diff.
+ * Calls the Python AI service to analyze a file diff with enhanced error handling.
  * @param filePath The path of the file being diffed.
  * @param fileDiff The raw diff content.
  * @param contentBefore Content before changes (optional, might be useful for AI).
  * @param contentAfter Content after changes (optional, might be useful for AI).
  * @param logger Optional logger instance.
+ * @param timeout Request timeout in milliseconds (default: 30000).
+ * @param retryCount Current retry attempt (for internal use).
  * @returns A Promise resolving to the AIAnalysis object or null if analysis fails.
  */
 export function analyzeDiff(
@@ -71,55 +79,42 @@ export function analyzeDiff(
 	fileDiff: string,
 	contentBefore: string | null,
 	contentAfter: string | null,
-	logger?: Logger
-): Promise<AIAnalysis | null> {
+	logger?: Logger,
+	timeout: number = DEFAULT_TIMEOUT,
+	retryCount: number = 0
+): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
-		// 数据流调试：记录AI服务请求开始
-		logger?.log('[AI Service] 🚀 Starting AI analysis request');
-		logger?.log(`[AI Service] 📊 Request data - FilePath: ${filePath}, DiffLength: ${fileDiff?.length || 0} chars`);
-		logger?.log(`[AI Service] 📝 Content info - Before: ${contentBefore?.length || 0} chars, After: ${contentAfter?.length || 0} chars`);
+		logger?.log(`[AI Service] Starting AI analysis request (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+		logger?.log(`[AI Service] Request data - FilePath: ${filePath}, DiffLength: ${fileDiff?.length || 0} chars`);
 
 		// 检查输入有效性
 		if (!fileDiff || fileDiff.trim() === '') {
-			logger?.log(`[AI Service] ⚠️ Skipping empty diff for: ${filePath}`);
+			logger?.log(`[AI Service] Skipping empty diff for: ${filePath}`);
 			resolve(null);
 			return;
 		}
 
-		// 数据流调试：记录缓存检查
-		logger?.log('[AI Service] 🔍 Checking cache for analysis result');
-
 		// 尝试从缓存获取结果
 		if (cacheManager) {
 			const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
-			logger?.log(`[AI Service] 🔑 Generated cache key: ${cacheKey.substring(0, 16)}...`);
+			logger?.log(`[AI Service] Checking cache with key: ${cacheKey.substring(0, 16)}...`);
 
-			const cacheCheckStartTime = Date.now();
 			const cachedResult = await cacheManager.get(cacheKey);
-			const cacheCheckEndTime = Date.now();
-
-			if (cachedResult) {
-				logger?.log(`[AI Service] ✅ Cache hit for: ${filePath} (checked in ${cacheCheckEndTime - cacheCheckStartTime}ms)`);
-				logger?.log(`[AI Service] 📋 Cached result - Summary length: ${cachedResult.summary?.length || 0} chars`);
+			if (cachedResult && cachedResult.summary) {
+				logger?.log(`[AI Service] Cache hit for: ${filePath}`);
 				resolve(cachedResult);
 				return;
 			} else {
-				logger?.log(`[AI Service] ❌ Cache miss for: ${filePath} (checked in ${cacheCheckEndTime - cacheCheckStartTime}ms)`);
+				logger?.log(`[AI Service] Cache miss for: ${filePath}`);
 			}
-		} else {
-			logger?.log('[AI Service] ⚠️ Cache manager not available - proceeding without cache');
 		}
 
-		// 数据流调试：记录HTTP请求构建
 		const postData = JSON.stringify({
 			file_path: filePath,
 			file_diff: fileDiff,
 			content_before: contentBefore,
 			content_after: contentAfter
 		});
-
-		logger?.log(`[AI Service] 📦 Built HTTP request - PayloadSize: ${postData.length} chars`);
-		logger?.log(`[AI Service] 🌐 Target endpoint: ${AI_SERVICE_HOST}:${AI_SERVICE_PORT}${AI_SERVICE_PATH}`);
 
 		const options: http.RequestOptions = {
 			hostname: AI_SERVICE_HOST,
@@ -130,105 +125,120 @@ export function analyzeDiff(
 				'Content-Type': 'application/json',
 				'Content-Length': Buffer.byteLength(postData)
 			},
-			timeout: 30000
+			timeout: timeout
 		};
 
-		logger?.log(`[AI Service] 🚀 Sending HTTP request to AI service for: ${filePath}`);
+		logger?.log(`[AI Service] Sending HTTP request to AI service for: ${filePath}`);
 		const requestStartTime = Date.now();
 
 		const req = http.request(options, (res) => {
 			let responseBody = '';
 			res.setEncoding('utf8');
 
-			// 数据流调试：记录响应接收
-			logger?.log(`[AI Service] 📡 Receiving response - StatusCode: ${res.statusCode}, Headers: ${JSON.stringify(res.headers)}`);
+			logger?.log(`[AI Service] Receiving response - StatusCode: ${res.statusCode}`);
 
 			res.on('data', (chunk) => {
 				responseBody += chunk;
-				logger?.log(`[AI Service] 📊 Received data chunk - Size: ${chunk.length} chars, Total so far: ${responseBody.length} chars`);
 			});
 
 			res.on('end', async () => {
-				const requestEndTime = Date.now();
-				const responseTime = requestEndTime - requestStartTime;
-
-				logger?.log(`[AI Service] ⏱️ Request completed in ${responseTime}ms - StatusCode: ${res.statusCode}, ResponseSize: ${responseBody.length} chars`);
+				const responseTime = Date.now() - requestStartTime;
+				logger?.log(`[AI Service] Request completed in ${responseTime}ms - StatusCode: ${res.statusCode}`);
 
 				if (res.statusCode === 200) {
 					try {
-						// 数据流调试：记录响应解析
-						logger?.log(`[AI Service] 🔄 Parsing JSON response for ${filePath}`);
-						const parseStartTime = Date.now();
 						const parsedData = JSON.parse(responseBody);
-						const parseEndTime = Date.now();
-
-						logger?.log(`[AI Service] ⏱️ JSON parsing completed in ${parseEndTime - parseStartTime}ms`);
-						logger?.log(`[AI Service] 📋 Parsed response structure: ${JSON.stringify(Object.keys(parsedData))}`);
 
 						if (parsedData && parsedData.analysis && parsedData.analysis.summary) {
-							const analysis = parsedData.analysis as AIAnalysis;
-							logger?.log(`[AI Service] ✅ Valid analysis received for: ${filePath}`);
-							logger?.log(`[AI Service] 📝 Analysis summary preview: "${analysis.summary.substring(0, 100)}..."`);
+							const analysis = { summary: parsedData.analysis.summary };
+							logger?.log(`[AI Service] Valid analysis received for: ${filePath}`);
 
-							// 数据流调试：记录缓存存储
+							// 缓存结果
 							if (cacheManager) {
-								logger?.log(`[AI Service] 💾 Storing result in cache for: ${filePath}`);
-								const cacheStoreStartTime = Date.now();
 								const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
 								await cacheManager.set(cacheKey, analysis);
-								const cacheStoreEndTime = Date.now();
-								logger?.log(`[AI Service] ✅ Cached result for: ${filePath} (stored in ${cacheStoreEndTime - cacheStoreStartTime}ms)`);
+								logger?.log(`[AI Service] Result cached for: ${filePath}`);
 							}
 
 							resolve(analysis);
 						} else {
-							logger?.logError(`[AI Service] ❌ Invalid response format from AI service for ${filePath}: ${responseBody}`);
-							logger?.logError(`[AI Service] 🔍 Expected structure: {analysis: {summary: string}}, Got: ${JSON.stringify(parsedData)}`);
-							resolve(null);
+							logger?.logError(`[AI Service] Invalid response format from AI service for ${filePath}`);
+
+							// 重试逻辑
+							if (retryCount < MAX_RETRIES) {
+								logger?.log(`[AI Service] Retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+								setTimeout(() => {
+									analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+										.then(resolve);
+								}, 1000 * (retryCount + 1)); // Exponential backoff
+							} else {
+								resolve(null);
+							}
 						}
 					} catch (e: any) {
-						logger?.logError(`[AI Service] ❌ Error parsing JSON response for ${filePath}: ${e} - Response: ${responseBody}`);
-						logger?.logError(`[AI Service] 🔍 Parse error details: ${e instanceof Error ? e.stack : 'Unknown parse error'}`);
-						resolve(null);
+						logger?.logError(`[AI Service] Error parsing JSON response for ${filePath}: ${e}`);
+
+						// 重试逻辑
+						if (retryCount < MAX_RETRIES) {
+							logger?.log(`[AI Service] Retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+							setTimeout(() => {
+								analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+									.then(resolve);
+							}, 1000 * (retryCount + 1));
+						} else {
+							resolve(null);
+						}
 					}
 				} else {
-					logger?.logError(`[AI Service] ❌ Request failed for ${filePath} - Status Code: ${res.statusCode} - Response: ${responseBody}`);
-					logger?.logError(`[AI Service] 🔍 Response headers: ${JSON.stringify(res.headers)}`);
-					resolve(null);
+					logger?.logError(`[AI Service] Request failed for ${filePath} - Status Code: ${res.statusCode}`);
+
+					// 重试逻辑 for 5xx errors
+					if (res.statusCode && res.statusCode >= 500 && retryCount < MAX_RETRIES) {
+						logger?.log(`[AI Service] Server error, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+						setTimeout(() => {
+							analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+								.then(resolve);
+						}, 1000 * (retryCount + 1));
+					} else {
+						resolve(null);
+					}
 				}
 			});
 		});
 
-		req.on('error', (e: Error) => {
-			const requestEndTime = Date.now();
-			const failedRequestTime = requestEndTime - requestStartTime;
+		req.on('error', (err) => {
+			logger?.logError(`[AI Service] Request error for ${filePath}: ${err.message}`);
 
-			logger?.logError(`[AI Service] ❌ Request error for ${filePath} after ${failedRequestTime}ms: ${e.message}`);
-			logger?.logError(`[AI Service] 🔍 Error details: ${e.stack || 'No stack trace'}`);
-
-			if (e.message.includes('ECONNREFUSED')) {
-				logger?.logError('[AI Service] 🔌 Connection refused. Is the Python AI server running on port 5111?');
-			} else if (e.message.includes('ETIMEDOUT')) {
-				logger?.logError('[AI Service] ⏰ Connection timed out. Check network connectivity to AI service.');
+			// 重试逻辑 for network errors
+			if (retryCount < MAX_RETRIES) {
+				logger?.log(`[AI Service] Network error, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+				setTimeout(() => {
+					analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+						.then(resolve);
+				}, 1000 * (retryCount + 1));
+			} else {
+				resolve(null);
 			}
-			resolve(null);
 		});
 
 		req.on('timeout', () => {
-			const requestEndTime = Date.now();
-			const timeoutDuration = requestEndTime - requestStartTime;
+			logger?.logError(`[AI Service] Request timeout for ${filePath} after ${timeout}ms`);
+			req.destroy();
 
-			logger?.logError(`[AI Service] ⏰ Request timed out for ${filePath} after ${timeoutDuration}ms.`);
-			req.destroy(new Error('Request timed out'));
-			resolve(null);
+			// 重试逻辑 for timeouts
+			if (retryCount < MAX_RETRIES) {
+				logger?.log(`[AI Service] Timeout, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+				setTimeout(() => {
+					analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout * 1.5, retryCount + 1) // Increase timeout
+						.then(resolve);
+				}, 1000 * (retryCount + 1));
+			} else {
+				resolve(null);
+			}
 		});
 
-		// 数据流调试：记录数据发送
-		logger?.log(`[AI Service] 📤 Writing request data - Size: ${postData.length} chars`);
-		// Write data to request body
 		req.write(postData);
 		req.end();
-		logger?.log(`[AI Service] ✅ Request sent successfully for: ${filePath}`);
 	});
 }
 
@@ -246,26 +256,18 @@ export async function analyzeDiffBatch(
 		contentAfter: string | null;
 	}>,
 	logger?: Logger
-): Promise<Array<{ filePath: string; analysis: AIAnalysis | null }>> {
-	// 限制并发数量以避免过载AI服务
-	const BATCH_SIZE = 3;
-	const results: Array<{ filePath: string; analysis: AIAnalysis | null }> = [];
+): Promise<Array<{ filePath: string; analysis: { summary: string } | null }>> {
+	logger?.log(`[AI Service] Starting batch analysis for ${analyses.length} files`);
 
-	for (let i = 0; i < analyses.length; i += BATCH_SIZE) {
-		const batch = analyses.slice(i, i + BATCH_SIZE);
-		const batchPromises = batch.map(async (item) => {
-			const analysis = await analyzeDiff(item.filePath, item.fileDiff, item.contentBefore, item.contentAfter, logger);
-			return { filePath: item.filePath, analysis };
-		});
+	const results = await Promise.all(
+		analyses.map(async ({ filePath, fileDiff, contentBefore, contentAfter }) => {
+			const analysis = await analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger);
+			return { filePath, analysis };
+		})
+	);
 
-		const batchResults = await Promise.all(batchPromises);
-		results.push(...batchResults);
-
-		// 在批次之间添加小延迟以避免过载
-		if (i + BATCH_SIZE < analyses.length) {
-			await new Promise(resolve => setTimeout(resolve, 100));
-		}
-	}
+	const successCount = results.filter(r => r.analysis !== null).length;
+	logger?.log(`[AI Service] Batch analysis completed: ${successCount}/${analyses.length} successful`);
 
 	return results;
 }
@@ -308,13 +310,13 @@ export function checkAIServiceAvailability(logger?: Logger): Promise<boolean> {
  * @param filePath The path of the file
  * @param prompt The analysis prompt
  * @param logger Optional logger instance
- * @returns A Promise resolving to the AIAnalysis object or null if analysis fails
+ * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileHistory(
 	filePath: string,
 	prompt: string,
 	logger?: Logger
-): Promise<AIAnalysis | null> {
+): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
 		// 检查输入有效性
 		if (!prompt || prompt.trim() === '') {
@@ -327,7 +329,7 @@ export function analyzeFileHistory(
 		if (cacheManager) {
 			const cacheKey = cacheManager.generateCacheKey(prompt, `file_history:${filePath}`);
 			const cachedResult = await cacheManager.get(cacheKey);
-			if (cachedResult) {
+			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file history: ${filePath}`);
 				resolve(cachedResult);
 				return;
@@ -366,7 +368,7 @@ export function analyzeFileHistory(
 					try {
 						const parsedData = JSON.parse(responseBody);
 						if (parsedData && parsedData.analysis && parsedData.analysis.summary) {
-							const analysis = parsedData.analysis as AIAnalysis;
+							const analysis = { summary: parsedData.analysis.summary };
 							logger?.log(`[AI Service] Received file history analysis for: ${filePath}`);
 
 							// 缓存结果
@@ -417,13 +419,13 @@ export function analyzeFileHistory(
  * @param filePath The path of the file
  * @param prompt The analysis prompt
  * @param logger Optional logger instance
- * @returns A Promise resolving to the AIAnalysis object or null if analysis fails
+ * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileVersionComparison(
 	filePath: string,
 	prompt: string,
 	logger?: Logger
-): Promise<AIAnalysis | null> {
+): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
 		// 检查输入有效性
 		if (!prompt || prompt.trim() === '') {
@@ -436,7 +438,7 @@ export function analyzeFileVersionComparison(
 		if (cacheManager) {
 			const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
 			const cachedResult = await cacheManager.get(cacheKey);
-			if (cachedResult) {
+			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file version comparison: ${filePath}`);
 				resolve(cachedResult);
 				return;
@@ -473,18 +475,16 @@ export function analyzeFileVersionComparison(
 				try {
 					const response = JSON.parse(data);
 					if (response.analysis && response.analysis.summary) {
-						const aiAnalysis: AIAnalysis = {
-							summary: response.analysis.summary
-						};
+						const analysis = { summary: response.analysis.summary };
 
 						// 缓存结果
 						if (cacheManager) {
 							const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
-							await cacheManager.set(cacheKey, aiAnalysis);
+							await cacheManager.set(cacheKey, analysis);
 						}
 
 						logger?.log(`[AI Service] File version comparison analysis completed for: ${filePath}`);
-						resolve(aiAnalysis);
+						resolve(analysis);
 					} else {
 						logger?.logError(`[AI Service] Invalid response format for file version comparison analysis: ${filePath}`);
 						resolve(null);

@@ -2994,7 +2994,7 @@ class GitGraphView {
 	}
 
 	/**
-     * Generate HTML for AI analysis section
+     * Generate HTML for AI analysis section with enhanced error handling and progress display
      */
 	private generateAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
 		if (expandedCommit.compareWithHash === null) {
@@ -3007,69 +3007,223 @@ class GitGraphView {
 	}
 
 	/**
-     * Generate AI analysis HTML for a single commit
+     * Generate AI analysis HTML for a single commit with error handling
      */
 	private getSingleCommitAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
 		const commitDetails = expandedCommit.commitDetails;
-		if (!commitDetails) return '<h4>AI分析</h4><p class="aiSummary">无法分析此提交。</p>';
-
-		// 如果有真实的AI分析数据，使用它
-		if (expandedCommit.aiAnalysis && expandedCommit.aiAnalysis.summary) {
-			// 检查是否是新的结构化格式
-			if (expandedCommit.aiAnalysis.summary.includes('<div class="ai-commit-summary">')) {
-				return '<h4>AI 智能分析</h4>' + expandedCommit.aiAnalysis.summary;
-			} else {
-				// 兼容旧格式
-				return '<h4>AI 分析摘要</h4>' +
-					'<div class="ai-analysis-content">' +
-					'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>' +
-					'</div>';
-			}
+		if (!commitDetails) {
+			return '<h4>AI Analysis</h4><div class="ai-analysis-error"><p>Unable to analyze this commit.</p></div>';
 		}
 
-		// 否则使用默认的占位符
-		return '<h4>AI 分析摘要</h4>' +
-            '<div class="ai-analysis-content">' +
-            '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
-            '<p class="aiSummary">该提交包含了 ' + commitDetails.fileChanges.length + ' 个文件更改。</p>' +
-            '</div>';
+		const aiAnalysis = expandedCommit.aiAnalysis;
+
+		// Handle successful analysis first (status completed or has summary)
+		if (aiAnalysis && (aiAnalysis.status === 'completed' || aiAnalysis.summary)) {
+			return this.generateAiSuccessHtml('AI Analysis', aiAnalysis);
+		}
+
+		// Handle error states
+		if (aiAnalysis && aiAnalysis.error) {
+			return this.generateAiErrorHtml('AI Analysis', aiAnalysis);
+		}
+
+		// Handle progress state
+		if (aiAnalysis && aiAnalysis.status === 'analyzing' && aiAnalysis.progress) {
+			return this.generateAiProgressHtml('AI Analysis', aiAnalysis.progress);
+		}
+
+		// Handle other analyzing states without progress
+		if (aiAnalysis && aiAnalysis.status === 'analyzing') {
+			return this.generateAiLoadingHtml('AI Analysis', commitDetails.fileChanges.length, 'Analysis in progress...');
+		}
+
+		// Default loading state
+		return this.generateAiLoadingHtml('AI Analysis', commitDetails.fileChanges.length);
 	}
 
 	/**
-     * Generate AI analysis HTML for a comparison between commits
+     * Generate AI analysis HTML for a comparison between commits with error handling
      */
 	private getComparisonAiAnalysisHtml(expandedCommit: ExpandedCommit): string {
 		const fileChanges = expandedCommit.fileChanges;
-		if (!fileChanges) return '<h4>AI分析</h4><p class="aiSummary">无法分析此比较。</p>';
-
-		// 如果有真实的AI分析数据，使用它
-		if (expandedCommit.aiAnalysis && expandedCommit.aiAnalysis.summary) {
-			// 检查是否是新的结构化格式
-			if (expandedCommit.aiAnalysis.summary.includes('<div class="ai-comparison-summary">')) {
-				return '<h4>AI 智能对比分析</h4>' + expandedCommit.aiAnalysis.summary;
-			} else {
-				// 兼容旧格式
-				return '<h4>AI 差异分析</h4>' +
-					'<div class="ai-analysis-content">' +
-					'<p class="aiSummary">' + expandedCommit.aiAnalysis.summary + '</p>' +
-					'</div>';
-			}
+		if (!fileChanges) {
+			return '<h4>AI Comparison Analysis</h4><div class="ai-analysis-error"><p>Unable to analyze this comparison.</p></div>';
 		}
 
-		// 获取不同类型变更的数量
+		const aiAnalysis = expandedCommit.aiAnalysis;
+
+		// Handle successful analysis first (status completed or has summary)
+		if (aiAnalysis && (aiAnalysis.status === 'completed' || aiAnalysis.summary)) {
+			return this.generateAiSuccessHtml('AI Comparison Analysis', aiAnalysis);
+		}
+
+		// Handle error states
+		if (aiAnalysis && aiAnalysis.error) {
+			return this.generateAiErrorHtml('AI Comparison Analysis', aiAnalysis);
+		}
+
+		// Handle progress state
+		if (aiAnalysis && aiAnalysis.status === 'analyzing' && aiAnalysis.progress) {
+			return this.generateAiProgressHtml('AI Comparison Analysis', aiAnalysis.progress);
+		}
+
+		// Handle other analyzing states without progress
+		if (aiAnalysis && aiAnalysis.status === 'analyzing') {
+			return this.generateAiLoadingHtml('AI Comparison Analysis', fileChanges.length, `Analysis in progress... ${this.generateComparisonStatsText(fileChanges)}`);
+		}
+
+		// Default loading state with file statistics
+		return this.generateAiLoadingHtml('AI Comparison Analysis', fileChanges.length, this.generateComparisonStatsText(fileChanges));
+	}
+
+	/**
+	 * Generate comparison statistics text
+	 */
+	private generateComparisonStatsText(fileChanges: ReadonlyArray<GG.GitFileChange>): string {
 		const additions = fileChanges.filter(f => f.type === GG.GitFileStatus.Added).length;
 		const modifications = fileChanges.filter(f => f.type === GG.GitFileStatus.Modified).length;
 		const deletions = fileChanges.filter(f => f.type === GG.GitFileStatus.Deleted).length;
 		const renames = fileChanges.filter(f => f.type === GG.GitFileStatus.Renamed).length;
 
-		// 否则使用默认的占位符
-		return '<h4>AI 差异分析</h4>' +
-            '<div class="ai-analysis-content">' +
-            '<p class="aiSummary">正在加载 AI 分析内容，请稍候...</p>' +
-            '<p class="aiSummary">此次比较中有 ' + additions + ' 个新增文件，' +
-            modifications + ' 个修改文件，' + deletions + ' 个删除文件' +
-            (renames > 0 ? '，' + renames + ' 个重命名文件' : '') + '。</p>' +
-            '</div>';
+		return `This comparison includes ${additions} added file${additions !== 1 ? 's' : ''}, ` +
+			`${modifications} modified file${modifications !== 1 ? 's' : ''}, ` +
+			`${deletions} deleted file${deletions !== 1 ? 's' : ''}` +
+			(renames > 0 ? `, and ${renames} renamed file${renames !== 1 ? 's' : ''}` : '') + '.';
+	}
+
+	/**
+	 * Generate HTML for error states
+	 */
+	private generateAiErrorHtml(title: string, aiAnalysis: AIAnalysis): string {
+		const errorTypeMessages: { [key: string]: { icon: string, title: string, suggestion: string } } = {
+			'disabled': {
+				icon: '⚙️',
+				title: 'AI Analysis Disabled',
+				suggestion: 'Enable AI analysis in the extension settings to see intelligent insights.'
+			},
+			'no_readable_files': {
+				icon: '📄',
+				title: 'No Readable Files',
+				suggestion: 'This commit contains only binary files, images, or excluded file types.'
+			},
+			'diff_extraction_failed': {
+				icon: '🔧',
+				title: 'Content Extraction Failed',
+				suggestion: 'Unable to extract file differences. Try refreshing the commit details.'
+			},
+			'analysis_failed': {
+				icon: '🤖',
+				title: 'Analysis Generation Failed',
+				suggestion: 'The AI service processed the files but could not generate meaningful analysis.'
+			},
+			'timeout': {
+				icon: '⏱️',
+				title: 'Analysis Timed Out',
+				suggestion: 'The files may be too large or the AI service is overloaded. Try again later.'
+			},
+			'service_unavailable': {
+				icon: '🔌',
+				title: 'AI Service Unavailable',
+				suggestion: 'The AI service is not running. Check your service configuration.'
+			},
+			'authentication_failed': {
+				icon: '🔐',
+				title: 'Authentication Failed',
+				suggestion: 'Check your AI service API configuration and credentials.'
+			},
+			'rate_limited': {
+				icon: '🚦',
+				title: 'Rate Limit Exceeded',
+				suggestion: 'The AI service has reached its request limit. Please try again later.'
+			},
+			'unknown_error': {
+				icon: '❗',
+				title: 'Unexpected Error',
+				suggestion: 'An unexpected error occurred. Check the extension logs for more details.'
+			}
+		};
+
+		const errorInfo = errorTypeMessages[aiAnalysis.errorType || 'unknown_error'] || errorTypeMessages['unknown_error'];
+
+		return `<h4>${title}</h4>
+		<div class="ai-analysis-error">
+			<div class="error-header">
+				<span class="error-icon">${errorInfo.icon}</span>
+				<span class="error-title">${errorInfo.title}</span>
+			</div>
+			<p class="error-message">${aiAnalysis.error}</p>
+			<p class="error-suggestion">${errorInfo.suggestion}</p>
+			${aiAnalysis.details && aiAnalysis.details.totalFiles ?
+		`<p class="error-details">Total files in commit: ${aiAnalysis.details.totalFiles}</p>` : ''}
+			${aiAnalysis.technicalError ?
+		`<details class="error-technical">
+					<summary>Technical Details</summary>
+					<pre>${aiAnalysis.technicalError}</pre>
+				</details>` : ''}
+		</div>`;
+	}
+
+	/**
+	 * Generate HTML for progress states
+	 */
+	private generateAiProgressHtml(title: string, progress: { current: number, total: number, message: string }): string {
+		const percentage = Math.round((progress.current / progress.total) * 100);
+
+		return `<h4>${title}</h4>
+		<div class="ai-analysis-progress">
+			<div class="progress-header">
+				<span class="progress-icon">🤖</span>
+				<span class="progress-title">Analyzing Files...</span>
+			</div>
+			<div class="progress-bar-container">
+				<div class="progress-bar" style="width: ${percentage}%"></div>
+			</div>
+			<p class="progress-text">${progress.message} (${progress.current}/${progress.total})</p>
+			<p class="progress-percentage">${percentage}% complete</p>
+		</div>`;
+	}
+
+	/**
+	 * Generate HTML for successful analysis
+	 */
+	private generateAiSuccessHtml(title: string, aiAnalysis: AIAnalysis): string {
+		let content = `<h4>${title}</h4>`;
+
+		// Check if it's the new structured format
+		if (aiAnalysis.summary && (aiAnalysis.summary.includes('<div class="ai-commit-summary">') || aiAnalysis.summary.includes('<div class="ai-comparison-summary">'))) {
+			content += aiAnalysis.summary;
+		} else {
+			// Legacy format
+			content += `<div class="ai-analysis-content">
+				<p class="aiSummary">${aiAnalysis.summary}</p>
+			</div>`;
+		}
+
+		// Add analysis metadata if available
+		if (aiAnalysis.filesAnalyzed !== undefined && aiAnalysis.totalFiles !== undefined) {
+			content += `<div class="ai-analysis-metadata">
+				<p class="analysis-stats">Analyzed ${aiAnalysis.filesAnalyzed} of ${aiAnalysis.totalFiles} files</p>
+			</div>`;
+		}
+
+		return content;
+	}
+
+	/**
+	 * Generate HTML for loading states
+	 */
+	private generateAiLoadingHtml(title: string, fileCount: number, customMessage?: string): string {
+		return `<h4>${title}</h4>
+		<div class="ai-analysis-loading">
+			<div class="loading-header">
+				<span class="loading-icon">⏳</span>
+				<span class="loading-title">Preparing Analysis...</span>
+			</div>
+			<p class="loading-message">${customMessage || `Preparing to analyze ${fileCount} file${fileCount !== 1 ? 's' : ''}...`}</p>
+			<div class="loading-spinner">
+				<div class="spinner"></div>
+			</div>
+		</div>`;
 	}
 
 	private setCdvHeight(elem: HTMLElement, isDocked: boolean) {

@@ -49,7 +49,7 @@ def analyze_diff():
             return jsonify({"error": "Missing data in request"}), 400
         
         # 检查是否是综合分析请求
-        if 'file_path' in data and data['file_path'] in ['comprehensive_commit_analysis', 'comprehensive_comparison_analysis']:
+        if 'file_path' in data and data['file_path'] in ['comprehensive_commit_analysis', 'comprehensive_comparison_analysis', 'comprehensive_uncommitted_analysis']:
             return handle_comprehensive_analysis(data)
         
         # 原有的单文件分析逻辑

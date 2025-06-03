@@ -30,8 +30,22 @@ declare global {
 	type AvatarImageCollection = { [email: string]: string };
 
 	interface AIAnalysis {
-		summary: string;
-		// Potentially add more fields later
+		summary?: string;
+		error?: string;
+		errorType?: 'disabled' | 'no_readable_files' | 'diff_extraction_failed' | 'analysis_failed' | 'timeout' | 'service_unavailable' | 'authentication_failed' | 'rate_limited' | 'invalid_response' | 'unknown_error';
+		technicalError?: string;
+		status?: 'analyzing' | 'completed' | 'error';
+		progress?: {
+			current: number;
+			total: number;
+			message: string;
+		};
+		details?: {
+			totalFiles?: number;
+			message?: string;
+		};
+		filesAnalyzed?: number;
+		totalFiles?: number;
 	}
 
 	interface ExpandedCommit {

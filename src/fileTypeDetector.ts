@@ -96,19 +96,28 @@ export class FileTypeDetector {
     private static async detectByContent(fullPath: string): Promise<boolean> {
     	try {
     		// 检查文件是否存在
-    		if (!fs.existsSync(fullPath)) {
+    		const fileExists = await fs.promises.access(fullPath, fs.constants.F_OK)
+    			.then(() => true)
+    			.catch(() => false);
+
+    		if (!fileExists) {
     			return false;
     		}
 
     		// 获取文件大小，过大的文件可能不适合分析
-    		const stats = fs.statSync(fullPath);
+    		const stats = await fs.promises.stat(fullPath);
     		if (stats.size > 1024 * 1024) { // 1MB 限制
     			return false;
     		}
 
+    		// 空文件被认为是文本文件
+    		if (stats.size === 0) {
+    			return true;
+    		}
+
     		// 读取文件开头部分进行检测
-    		const buffer = fs.readFileSync(fullPath, { encoding: null });
-    		const sampleSize = Math.min(512, buffer.length);
+    		const sampleSize = Math.min(512, stats.size);
+    		const buffer = await fs.promises.readFile(fullPath, { encoding: null });
     		const sample = buffer.slice(0, sampleSize);
 
     		// 1. 检查 shebang
@@ -134,6 +143,7 @@ export class FileTypeDetector {
 
     	} catch (error) {
     		// 如果无法读取文件，保守地返回 false
+    		// 静默处理错误，避免阻塞整个分析流程
     		return false;
     	}
     }

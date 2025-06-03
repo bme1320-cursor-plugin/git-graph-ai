@@ -380,7 +380,7 @@ export class DataSource extends Disposable {
 	}
 
 	/**
-	 * Perform AI analysis asynchronously and send update when complete
+	 * Enhanced AI analysis with detailed error handling and fallback information
 	 */
 	private async performAsyncCommitAnalysis(
 		repo: string,
@@ -390,131 +390,256 @@ export class DataSource extends Disposable {
 		aiConfig: any
 	): Promise<void> {
 		try {
-			// 数据流调试：记录分析开始
-			this.logger.log(`[AI Analysis Flow] 🚀 Starting commit analysis for ${commitHash.substring(0, 8)}`);
-			this.logger.log(`[AI Analysis Flow] 📊 Input data - Repo: ${repo}, FromCommit: ${fromCommit}, FileChanges: ${commitDetails.fileChanges?.length || 0}`);
-			this.logger.log(`[AI Analysis Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}, Timeout: ${aiConfig.timeout}`);
-
-			// 使用智能文件类型检测器来过滤符合条件的文件
-			const eligibleFilePromises = commitDetails.fileChanges.map(async (fileChange: any) => {
-				const isEligible = await this.isFileEligibleForAIAnalysis(fileChange, aiConfig, repo);
-				return isEligible ? fileChange : null;
-			});
-
-			const eligibleFileResults = await Promise.all(eligibleFilePromises);
-			const eligibleFiles = eligibleFileResults
-				.filter((fileChange): fileChange is any => fileChange !== null)
-				.slice(0, aiConfig.maxFilesPerAnalysis);
-
-			// 数据流调试：记录文件过滤结果
-			this.logger.log(`[AI Analysis Flow] 🔍 File filtering - Total: ${commitDetails.fileChanges?.length || 0}, Eligible: ${eligibleFiles.length}, Max allowed: ${aiConfig.maxFilesPerAnalysis}`);
-
-			if (eligibleFiles.length === 0) {
-				// 如果没有符合条件的文件，提供基础统计信息
-				this.logger.log('[AI Analysis Flow] ⚠️ No eligible files found for AI analysis, generating basic stats');
-				const stats = this.generateCommitStats(commitDetails.fileChanges);
-				const basicAnalysis = {
-					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
-				};
-
-				// 发送AI分析更新消息
-				this.logger.log(`[AI Analysis Flow] 📤 Sending basic analysis update for ${commitHash.substring(0, 8)}`);
-				this.sendAIAnalysisUpdate(commitHash, null, basicAnalysis);
+			// 检查 AI 分析是否启用
+			if (!aiConfig.enabled) {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					error: 'AI analysis is disabled in settings',
+					errorType: 'disabled'
+				});
 				return;
 			}
 
-			// 数据流调试：记录开始收集文件数据
-			this.logger.log(`[AI Analysis Flow] 📂 Starting to collect file diff data for ${eligibleFiles.length} files`);
-			const fileDataStartTime = Date.now();
+			this.logger.log(`Starting AI analysis for commit: ${commitHash}`);
 
-			// 收集所有文件的差异内容
-			const fileAnalysisData = await Promise.all(
-				eligibleFiles.map(async (fileChange: any, index: number) => {
-					try {
-						this.logger.log(`[AI Analysis Flow] 📄 Processing file ${index + 1}/${eligibleFiles.length}: ${fileChange.newFilePath}`);
+			// 发送初始进度更新
+			this.sendAIAnalysisUpdate(commitHash, null, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: commitDetails.fileChanges.length,
+					message: `Scanning ${commitDetails.fileChanges.length} files for analysis eligibility...`
+				}
+			});
 
-						const [contentBefore, contentAfter, diffContent] = await Promise.all([
-							this.getCommitFile(repo, fromCommit, fileChange.oldFilePath).catch(() => null),
-							this.getCommitFile(repo, commitHash, fileChange.newFilePath).catch(() => null),
-							this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath)
-						]);
-
-						this.logger.log(`[AI Analysis Flow] 📝 File data collected for ${fileChange.newFilePath}: beforeContent=${contentBefore ? contentBefore.length : 0}chars, afterContent=${contentAfter ? contentAfter.length : 0}chars, diffLength=${diffContent ? diffContent.length : 0}chars`);
-
-						if (diffContent && diffContent.trim() !== '') {
-							return {
-								filePath: fileChange.newFilePath,
-								diffContent: diffContent,
-								contentBefore: contentBefore,
-								contentAfter: contentAfter,
-								type: fileChange.type
-							};
-						} else {
-							this.logger.log(`[AI Analysis Flow] ⚠️ Empty diff content for ${fileChange.newFilePath}, skipping`);
-						}
-					} catch (error) {
-						this.logger.logError(`[AI Analysis Flow] ❌ Failed to get content/diff for ${fileChange.newFilePath}: ${error}`);
-					}
-					return null;
-				})
+			// 使用智能文件类型检测器来过滤符合条件的文件，添加超时和错误处理
+			const eligibleFiles = await this.filterEligibleFilesWithTimeout(
+				commitDetails.fileChanges,
+				aiConfig,
+				repo,
+				commitHash,
+				10000 // 10秒超时
 			);
 
-			const validFileData = fileAnalysisData.filter((data): data is {
-				filePath: string;
-				diffContent: string;
-				contentBefore: string | null;
-				contentAfter: string | null;
-				type: any;
-			} => data !== null);
-
-			const fileDataEndTime = Date.now();
-			this.logger.log(`[AI Analysis Flow] ✅ File data collection completed in ${fileDataEndTime - fileDataStartTime}ms - Valid files: ${validFileData.length}/${eligibleFiles.length}`);
-
-			let overallAnalysis = null;
-			if (validFileData.length > 0) {
-				// 数据流调试：记录AI服务调用开始
-				this.logger.log('[AI Analysis Flow] 🤖 Calling AI service for comprehensive analysis');
-				this.logger.log(`[AI Analysis Flow] 📊 AI Input summary - Files: ${validFileData.length}, Total diff size: ${validFileData.reduce((total, file) => total + file.diffContent.length, 0)} chars`);
-
-				const aiCallStartTime = Date.now();
-
-				// 使用AI服务进行综合分析
-				overallAnalysis = await this.generateComprehensiveCommitAnalysis(
-					commitDetails,
-					validFileData,
-					this.logger
-				);
-
-				const aiCallEndTime = Date.now();
-				this.logger.log(`[AI Analysis Flow] 🤖 AI service call completed in ${aiCallEndTime - aiCallStartTime}ms`);
-				this.logger.log(`[AI Analysis Flow] 📋 AI Response received - Has summary: ${!!overallAnalysis?.summary}, Length: ${overallAnalysis?.summary?.length || 0} chars`);
+			// 检查是否有可分析的文件
+			if (eligibleFiles.length === 0) {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					error: 'No readable files found for AI analysis',
+					errorType: 'no_readable_files',
+					details: {
+						totalFiles: commitDetails.fileChanges.length,
+						message: 'This commit contains no files that can be analyzed by AI. This may include binary files, images, or files excluded by your configuration.'
+					}
+				});
+				return;
 			}
 
-			// 如果没有AI分析结果，提供基础统计信息
-			if (!overallAnalysis) {
-				this.logger.log('[AI Analysis Flow] ⚠️ No AI analysis result, falling back to basic stats');
-				const stats = this.generateCommitStats(commitDetails.fileChanges);
-				overallAnalysis = {
-					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
-				};
+			// 限制分析的文件数量
+			const filesToAnalyze = eligibleFiles.slice(0, aiConfig.maxFilesPerAnalysis);
+			this.logger.log(`Found ${eligibleFiles.length} eligible files for AI analysis out of ${commitDetails.fileChanges.length} total files, analyzing ${filesToAnalyze.length}`);
+
+			// 发送进度更新
+			this.sendAIAnalysisUpdate(commitHash, null, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: filesToAnalyze.length,
+					message: `Analyzing ${filesToAnalyze.length} files...`
+				}
+			});
+
+			// 获取文件内容和差异
+			const fileAnalysisData = [];
+			for (let i = 0; i < filesToAnalyze.length; i++) {
+				const fileChange = filesToAnalyze[i];
+				try {
+					const diffContent = await this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath);
+
+					if (diffContent) {
+						// 更新进度
+						this.sendAIAnalysisUpdate(commitHash, null, {
+							status: 'analyzing',
+							progress: {
+								current: i + 1,
+								total: filesToAnalyze.length,
+								message: `Processing ${fileChange.newFilePath}...`
+							}
+						});
+
+						fileAnalysisData.push({
+							filePath: fileChange.newFilePath,
+							diffContent: diffContent,
+							contentBefore: null,
+							contentAfter: null,
+							type: fileChange.type
+						});
+					}
+				} catch (error) {
+					this.logger.log(`Failed to get diff for file ${fileChange.newFilePath}: ${error}`);
+				}
 			}
 
-			// 发送AI分析更新消息
-			this.logger.log(`[AI Analysis Flow] 📤 Sending final analysis update for ${commitHash.substring(0, 8)}`);
-			this.logger.log(`[AI Analysis Flow] 📊 Final analysis summary preview: ${overallAnalysis.summary.substring(0, 100)}...`);
-			this.sendAIAnalysisUpdate(commitHash, null, overallAnalysis);
-			this.logger.log(`[AI Analysis Flow] ✅ Commit analysis completed successfully for ${commitHash.substring(0, 8)}`);
+			if (fileAnalysisData.length === 0) {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					error: 'Failed to extract file differences for analysis',
+					errorType: 'diff_extraction_failed',
+					details: {
+						message: 'Could not generate diffs for the files in this commit.'
+					}
+				});
+				return;
+			}
+
+			// 生成 AI 分析
+			const analysis = await this.generateComprehensiveCommitAnalysis(commitDetails, fileAnalysisData, this.logger);
+
+			if (analysis) {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					...analysis,
+					status: 'completed',
+					filesAnalyzed: fileAnalysisData.length,
+					totalFiles: commitDetails.fileChanges.length
+				});
+			} else {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					error: 'AI analysis failed to generate results',
+					errorType: 'analysis_failed',
+					details: {
+						message: 'The AI service processed the files but could not generate meaningful analysis.'
+					}
+				});
+			}
 
 		} catch (error) {
-			this.logger.logError(`[AI Analysis Flow] ❌ AI analysis failed for commit ${commitHash}: ${error}`);
-			this.logger.logError(`[AI Analysis Flow] 🔍 Error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+			this.logger.logError(`AI analysis failed for commit ${commitHash}: ${error}`);
 
-			// 发送错误状态的AI分析
-			const errorAnalysis = {
-				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
-			};
-			this.sendAIAnalysisUpdate(commitHash, null, errorAnalysis);
+			// 根据错误类型发送相应的错误信息
+			if (error instanceof Error) {
+				if (error.message.includes('timeout') || error.message.includes('TIMEOUT')) {
+					this.sendAIAnalysisUpdate(commitHash, null, {
+						error: 'AI analysis timed out',
+						errorType: 'timeout',
+						details: {
+							message: 'The analysis took too long to complete. This may be due to processing a large number of files or temporary service issues.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+					this.sendAIAnalysisUpdate(commitHash, null, {
+						error: 'AI service is unavailable',
+						errorType: 'service_unavailable',
+						details: {
+							message: 'Could not connect to the AI analysis service. Please check your AI service configuration and network connectivity.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('401') || error.message.includes('403') || error.message.includes('authentication')) {
+					this.sendAIAnalysisUpdate(commitHash, null, {
+						error: 'Authentication failed',
+						errorType: 'authentication_failed',
+						details: {
+							message: 'AI service authentication failed. Please check your API key or credentials in the settings.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('429') || error.message.includes('rate limit')) {
+					this.sendAIAnalysisUpdate(commitHash, null, {
+						error: 'Rate limit exceeded',
+						errorType: 'rate_limited',
+						details: {
+							message: 'Too many requests to the AI service. Please wait a moment before trying again.'
+						},
+						technicalError: error.message
+					});
+				} else {
+					this.sendAIAnalysisUpdate(commitHash, null, {
+						error: 'AI analysis encountered an unexpected error',
+						errorType: 'unknown_error',
+						details: {
+							message: 'An unexpected error occurred during analysis. Please try again or check the logs for more details.'
+						},
+						technicalError: error.message
+					});
+				}
+			} else {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					error: 'AI analysis failed with unknown error',
+					errorType: 'unknown_error',
+					details: {
+						message: 'An unknown error occurred during analysis.'
+					}
+				});
+			}
 		}
+	}
+
+	/**
+	 * Filter eligible files with timeout and progress tracking
+	 */
+	private async filterEligibleFilesWithTimeout(
+		fileChanges: any[],
+		aiConfig: any,
+		repo: string,
+		commitHash: string,
+		timeoutMs: number = 10000
+	): Promise<any[]> {
+		const startTime = Date.now();
+		const eligibleFiles: any[] = [];
+
+		// 分析新增、修改和重命名的文件（排除删除的文件，因为没有内容可分析）
+		const candidateFiles = fileChanges.filter(fileChange =>
+			fileChange.type === GitFileStatus.Added ||
+			fileChange.type === GitFileStatus.Modified ||
+			fileChange.type === GitFileStatus.Renamed
+		);
+
+		this.logger.log(`Filtering ${candidateFiles.length} candidate files for eligibility`);
+
+		for (let i = 0; i < candidateFiles.length; i++) {
+			// 检查超时
+			if (Date.now() - startTime > timeoutMs) {
+				this.logger.log(`File eligibility check timed out after processing ${i}/${candidateFiles.length} files`);
+				break;
+			}
+
+			// 每处理10个文件更新一次进度
+			if (i % 10 === 0) {
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					status: 'analyzing',
+					progress: {
+						current: i,
+						total: candidateFiles.length,
+						message: `Checking file eligibility (${i}/${candidateFiles.length})...`
+					}
+				});
+			}
+
+			const fileChange = candidateFiles[i];
+
+			try {
+				// 为每个文件设置更短的超时
+				const isEligible = await Promise.race([
+					this.isFileEligibleForAIAnalysis(fileChange, aiConfig, repo),
+					new Promise<boolean>((_, reject) =>
+						setTimeout(() => reject(new Error('File check timeout')), 1000)
+					)
+				]);
+
+				if (isEligible) {
+					eligibleFiles.push(fileChange);
+				}
+			} catch (error) {
+				this.logger.log(`Failed to check eligibility for ${fileChange.newFilePath}: ${error}`);
+				// 如果检测失败，使用简单的扩展名检查作为回退
+				const ext = fileChange.newFilePath.substring(fileChange.newFilePath.lastIndexOf('.')).toLowerCase();
+				if (aiConfig.supportedFileExtensions &&
+					aiConfig.supportedFileExtensions.some((supportedExt: string) => ext === supportedExt.toLowerCase())) {
+					eligibleFiles.push(fileChange);
+				}
+			}
+		}
+
+		this.logger.log(`File eligibility check completed: ${eligibleFiles.length}/${candidateFiles.length} eligible`);
+		return eligibleFiles;
 	}
 
 	/**
@@ -581,19 +706,338 @@ export class DataSource extends Disposable {
 			this.getDiffNameStatus(repo, 'HEAD', ''),
 			this.getDiffNumStat(repo, 'HEAD', ''),
 			this.getStatus(repo)
-		]).then((results) => {
-			return {
-				commitDetails: {
-					hash: UNCOMMITTED, parents: [],
-					author: '', authorEmail: '', authorDate: 0,
-					committer: '', committerEmail: '', committerDate: 0, signature: null,
-					body: '', fileChanges: generateFileChanges(results[0], results[1], results[2])
-				},
-				error: null
+		]).then(async (results) => {
+			const fileChanges = generateFileChanges(results[0], results[1], results[2]);
+			const commitDetails = {
+				hash: UNCOMMITTED, parents: [],
+				author: '', authorEmail: '', authorDate: 0,
+				committer: '', committerEmail: '', committerDate: 0, signature: null,
+				body: '', fileChanges: fileChanges
 			};
+
+			// 立即返回基本的 uncommitted details，不等待AI分析
+			const basicResult = { commitDetails: commitDetails, error: null };
+
+			// 获取AI分析配置
+			const config = getConfig();
+			const aiConfig = config.aiAnalysis;
+
+			// 异步执行AI分析，不阻塞基本信息的返回
+			if (aiConfig.enabled && fileChanges.length > 0) {
+				this.performAsyncUncommittedAnalysis(repo, commitDetails, aiConfig)
+					.catch(error => {
+						this.logger.logError(`Async AI analysis failed for uncommitted changes: ${error}`);
+					});
+			}
+
+			return basicResult;
 		}).catch((errorMessage) => {
 			return { commitDetails: null, error: errorMessage };
 		});
+	}
+
+	/**
+	 * Enhanced AI analysis for uncommitted changes with detailed error handling
+	 */
+	private async performAsyncUncommittedAnalysis(
+		repo: string,
+		commitDetails: any,
+		aiConfig: any
+	): Promise<void> {
+		try {
+			// 检查 AI 分析是否启用
+			if (!aiConfig.enabled) {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					error: 'AI analysis is disabled in settings',
+					errorType: 'disabled'
+				});
+				return;
+			}
+
+			this.logger.log('Starting AI analysis for uncommitted changes');
+
+			// 发送初始进度更新
+			this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: commitDetails.fileChanges.length,
+					message: `Scanning ${commitDetails.fileChanges.length} uncommitted files for analysis eligibility...`
+				}
+			});
+
+			// 使用智能文件类型检测器来过滤符合条件的文件，添加超时和错误处理
+			const eligibleFiles = await this.filterEligibleFilesWithTimeout(
+				commitDetails.fileChanges,
+				aiConfig,
+				repo,
+				UNCOMMITTED,
+				10000 // 10秒超时
+			);
+
+			// 检查是否有可分析的文件
+			if (eligibleFiles.length === 0) {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					error: 'No readable files found for AI analysis',
+					errorType: 'no_readable_files',
+					details: {
+						totalFiles: commitDetails.fileChanges.length,
+						message: 'The uncommitted changes contain no files that can be analyzed by AI. This may include binary files, images, or files excluded by your configuration.'
+					}
+				});
+				return;
+			}
+
+			// 限制分析的文件数量
+			const filesToAnalyze = eligibleFiles.slice(0, aiConfig.maxFilesPerAnalysis);
+			this.logger.log(`Found ${eligibleFiles.length} eligible files for AI analysis out of ${commitDetails.fileChanges.length} total uncommitted files, analyzing ${filesToAnalyze.length}`);
+
+			// 发送进度更新
+			this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: filesToAnalyze.length,
+					message: `Analyzing ${filesToAnalyze.length} uncommitted files...`
+				}
+			});
+
+			// 获取文件内容和差异
+			const fileAnalysisData = [];
+			for (let i = 0; i < filesToAnalyze.length; i++) {
+				const fileChange = filesToAnalyze[i];
+				try {
+					// 对于uncommitted changes，使用HEAD作为fromHash，空字符串作为toHash
+					const diffContent = await this.getDiffBetweenRevisions(repo, 'HEAD', '', fileChange.newFilePath);
+
+					if (diffContent) {
+						// 更新进度
+						this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+							status: 'analyzing',
+							progress: {
+								current: i + 1,
+								total: filesToAnalyze.length,
+								message: `Processing ${fileChange.newFilePath}...`
+							}
+						});
+
+						fileAnalysisData.push({
+							filePath: fileChange.newFilePath,
+							diffContent: diffContent,
+							contentBefore: null,
+							contentAfter: null,
+							type: fileChange.type
+						});
+					}
+				} catch (error) {
+					this.logger.log(`Failed to get diff for uncommitted file ${fileChange.newFilePath}: ${error}`);
+				}
+			}
+
+			if (fileAnalysisData.length === 0) {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					error: 'Failed to extract file differences for analysis',
+					errorType: 'diff_extraction_failed',
+					details: {
+						message: 'Could not generate diffs for the uncommitted files.'
+					}
+				});
+				return;
+			}
+
+			// 生成 AI 分析
+			const analysis = await this.generateComprehensiveUncommittedAnalysis(fileAnalysisData, this.logger);
+
+			if (analysis) {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					...analysis,
+					status: 'completed',
+					filesAnalyzed: fileAnalysisData.length,
+					totalFiles: commitDetails.fileChanges.length
+				});
+			} else {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					error: 'AI analysis failed to generate results',
+					errorType: 'analysis_failed',
+					details: {
+						message: 'The AI service processed the uncommitted files but could not generate meaningful analysis.'
+					}
+				});
+			}
+
+		} catch (error) {
+			this.logger.logError(`AI analysis failed for uncommitted changes: ${error}`);
+
+			// 根据错误类型发送相应的错误信息
+			if (error instanceof Error) {
+				if (error.message.includes('timeout') || error.message.includes('TIMEOUT')) {
+					this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+						error: 'AI analysis timed out',
+						errorType: 'timeout',
+						details: {
+							message: 'The analysis took too long to complete. This may be due to processing a large number of files or temporary service issues.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+					this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+						error: 'AI service is unavailable',
+						errorType: 'service_unavailable',
+						details: {
+							message: 'Could not connect to the AI analysis service. Please check your AI service configuration and network connectivity.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('401') || error.message.includes('403') || error.message.includes('authentication')) {
+					this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+						error: 'Authentication failed',
+						errorType: 'authentication_failed',
+						details: {
+							message: 'AI service authentication failed. Please check your API key or credentials in the settings.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('429') || error.message.includes('rate limit')) {
+					this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+						error: 'Rate limit exceeded',
+						errorType: 'rate_limited',
+						details: {
+							message: 'Too many requests to the AI service. Please wait a moment before trying again.'
+						},
+						technicalError: error.message
+					});
+				} else {
+					this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+						error: 'AI analysis encountered an unexpected error',
+						errorType: 'unknown_error',
+						details: {
+							message: 'An unexpected error occurred during analysis. Please try again or check the logs for more details.'
+						},
+						technicalError: error.message
+					});
+				}
+			} else {
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					error: 'AI analysis failed with unknown error',
+					errorType: 'unknown_error',
+					details: {
+						message: 'An unknown error occurred during analysis.'
+					}
+				});
+			}
+		}
+	}
+
+	/**
+	 * Generate comprehensive uncommitted changes analysis using AI service
+	 * @param fileAnalysisData Array of file analysis data
+	 * @param logger Logger instance
+	 * @returns AI analysis result
+	 */
+	private async generateComprehensiveUncommittedAnalysis(
+		fileAnalysisData: Array<{
+			filePath: string;
+			diffContent: string;
+			contentBefore: string | null;
+			contentAfter: string | null;
+			type: GitFileStatus;
+		}>,
+		logger: Logger
+	): Promise<{ summary: string } | null> {
+		try {
+			// 数据流调试：记录AI服务调用详情
+			logger.log('[AI Service Call] 🎯 Starting comprehensive uncommitted changes analysis via AI service');
+			logger.log(`[AI Service Call] 📊 Uncommitted data - FileCount: ${fileAnalysisData.length}`);
+
+			// 构建详细的提示词
+			const prompt = this.buildComprehensiveUncommittedAnalysisPrompt(fileAnalysisData);
+
+			// 数据流调试：记录提示词信息
+			logger.log(`[AI Service Call] 📝 Generated uncommitted prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+
+			// 使用真实的AI分析服务进行综合分析
+			const analysis = await analyzeDiff(
+				'comprehensive_uncommitted_analysis',
+				prompt,
+				null,
+				null,
+				logger
+			);
+
+			if (analysis) {
+				// 数据流调试：记录AI服务响应
+				logger.log(`[AI Service Call] ✅ AI service returned uncommitted analysis - Summary length: ${analysis.summary?.length || 0} chars`);
+				logger.log(`[AI Service Call] 📋 Uncommitted analysis summary preview: "${analysis.summary?.substring(0, 150)}..."`);
+
+				return {
+					summary: `<div class="ai-uncommitted-summary">${analysis.summary}</div>`
+				};
+			} else {
+				logger.log('[AI Service Call] ⚠️ AI service returned null analysis for uncommitted changes');
+			}
+		} catch (error) {
+			logger.logError(`[AI Service Call] ❌ Failed to generate comprehensive uncommitted analysis: ${error}`);
+			logger.logError(`[AI Service Call] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
+		}
+		return null;
+	}
+
+	/**
+	 * Build comprehensive analysis prompt for uncommitted changes
+	 * @param fileAnalysisData Array of file analysis data
+	 * @returns Formatted prompt for AI analysis
+	 */
+	private buildComprehensiveUncommittedAnalysisPrompt(
+		fileAnalysisData: Array<{
+			filePath: string;
+			diffContent: string;
+			contentBefore: string | null;
+			contentAfter: string | null;
+			type: GitFileStatus;
+		}>
+	): string {
+		const stats = this.generateCommitStats(fileAnalysisData.map(f => ({
+			type: f.type,
+			newFilePath: f.filePath,
+			oldFilePath: f.filePath
+		} as GitFileChange)));
+
+		let prompt = `请对以下未提交的代码变更进行综合分析，提供一个整体性的总结报告。
+
+未提交变更信息：
+- 类型: 工作区未提交变更
+- ${stats}
+
+主要文件变更：
+`;
+
+		fileAnalysisData.forEach((fileData, index) => {
+			prompt += `
+${index + 1}. 文件: ${fileData.filePath}
+   变更类型: ${this.getFileChangeTypeDescription(fileData.type)}
+   
+   差异内容:
+   \`\`\`diff
+   ${fileData.diffContent.substring(0, 1000)}${fileData.diffContent.length > 1000 ? '...' : ''}
+   \`\`\`
+`;
+		});
+
+		prompt += `
+请提供一个综合性的分析报告，包括：
+1. 未提交变更的主要目的和意图
+2. 涉及的核心功能或模块
+3. 变更的技术影响和业务价值
+4. 代码质量和架构方面的观察
+5. 提交建议（是否适合提交、需要注意的事项等）
+
+要求：
+- 使用中文回答
+- 重点关注变更的整体性和关联性，而非单个文件的细节
+- 控制在150字以内
+- 使用HTML格式，包含适当的段落和强调标签`;
+
+		return prompt;
 	}
 
 	/**
@@ -641,7 +1085,7 @@ export class DataSource extends Disposable {
 	}
 
 	/**
-	 * Perform AI comparison analysis asynchronously and send update when complete
+	 * Enhanced comparison analysis with detailed error handling
 	 */
 	private async performAsyncComparisonAnalysis(
 		repo: string,
@@ -653,129 +1097,250 @@ export class DataSource extends Disposable {
 		originalCompareWithHash: string
 	): Promise<void> {
 		try {
-			// 数据流调试：记录比较分析开始
-			this.logger.log(`[AI Comparison Flow] 🚀 Starting comparison analysis for ${fromHash.substring(0, 8)}..${toHash.substring(0, 8)}`);
-			this.logger.log(`[AI Comparison Flow] 📊 Input data - Repo: ${repo}, FileChanges: ${fileChanges.length}, Original: ${originalCommitHash}..${originalCompareWithHash}`);
-			this.logger.log(`[AI Comparison Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}`);
-
-			// 获取符合AI分析条件的文件
-			const eligibleFilePromises = fileChanges.map(async (file) => {
-				const isEligible = await this.isFileEligibleForAIAnalysis(file, aiConfig, repo);
-				return isEligible ? file : null;
-			});
-
-			const eligibleFileResults = await Promise.all(eligibleFilePromises);
-			const eligibleFiles = eligibleFileResults.filter((file): file is GitFileChange => file !== null);
-
-			// 数据流调试：记录文件过滤结果
-			this.logger.log(`[AI Comparison Flow] 🔍 File filtering - Total: ${fileChanges.length}, Eligible: ${eligibleFiles.length}, Max allowed: ${aiConfig.maxFilesPerAnalysis}`);
-
-			if (eligibleFiles.length === 0) {
-				// 如果没有符合条件的文件，提供基础统计信息
-				this.logger.log('[AI Comparison Flow] ⚠️ No eligible files found for AI analysis, generating basic comparison stats');
-				const stats = this.generateComparisonStats(fileChanges);
-				const basicAnalysis = {
-					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
-				};
-
-				// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
-				this.logger.log(`[AI Comparison Flow] 📤 Sending basic comparison analysis update for ${originalCommitHash}..${originalCompareWithHash}`);
-				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, basicAnalysis);
+			// 检查 AI 分析是否启用
+			if (!aiConfig.enabled) {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					error: 'AI analysis is disabled in settings',
+					errorType: 'disabled'
+				});
 				return;
 			}
 
-			// 数据流调试：记录开始收集比较文件数据
-			this.logger.log(`[AI Comparison Flow] 📂 Starting to collect comparison file diff data for ${eligibleFiles.length} files`);
-			const fileDataStartTime = Date.now();
+			this.logger.log(`Starting comparison analysis between ${fromHash} and ${toHash}`);
 
-			// 收集所有文件的差异内容
-			const fileAnalysisData = await Promise.all(
-				eligibleFiles.map(async (fileChange, index) => {
-					try {
-						this.logger.log(`[AI Comparison Flow] 📄 Processing comparison file ${index + 1}/${eligibleFiles.length}: ${fileChange.newFilePath}`);
+			// 发送初始进度更新
+			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: fileChanges.length,
+					message: `Scanning ${fileChanges.length} files for analysis eligibility...`
+				}
+			});
 
-						const [contentBefore, contentAfter, diffContent] = await Promise.all([
-							this.getCommitFile(repo, fromHash, fileChange.oldFilePath).catch(() => null),
-							this.getCommitFile(repo, toHash === UNCOMMITTED ? 'HEAD' : toHash, fileChange.newFilePath).catch(() => null),
-							this.getDiffBetweenRevisions(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash, fileChange.newFilePath)
-						]);
-
-						this.logger.log(`[AI Comparison Flow] 📝 Comparison file data collected for ${fileChange.newFilePath}: beforeContent=${contentBefore ? contentBefore.length : 0}chars, afterContent=${contentAfter ? contentAfter.length : 0}chars, diffLength=${diffContent ? diffContent.length : 0}chars`);
-
-						if (diffContent && diffContent.trim() !== '') {
-							return {
-								filePath: fileChange.newFilePath,
-								diffContent: diffContent,
-								contentBefore: contentBefore,
-								contentAfter: contentAfter,
-								type: fileChange.type
-							};
-						} else {
-							this.logger.log(`[AI Comparison Flow] ⚠️ Empty diff content for comparison file ${fileChange.newFilePath}, skipping`);
-						}
-					} catch (error) {
-						this.logger.logError(`[AI Comparison Flow] ❌ Failed to get content/diff for comparison file ${fileChange.newFilePath}: ${error}`);
-					}
-					return null;
-				})
+			// 使用智能文件类型检测器来过滤符合条件的文件，添加超时和错误处理
+			const eligibleFiles = await this.filterEligibleFilesForComparison(
+				fileChanges,
+				aiConfig,
+				repo,
+				originalCommitHash,
+				originalCompareWithHash,
+				10000 // 10秒超时
 			);
 
-			const validFileData = fileAnalysisData.filter((data): data is {
-				filePath: string;
-				diffContent: string;
-				contentBefore: string | null;
-				contentAfter: string | null;
-				type: any;
-			} => data !== null);
-
-			const fileDataEndTime = Date.now();
-			this.logger.log(`[AI Comparison Flow] ✅ Comparison file data collection completed in ${fileDataEndTime - fileDataStartTime}ms - Valid files: ${validFileData.length}/${eligibleFiles.length}`);
-
-			let overallAnalysis = null;
-			if (validFileData.length > 0) {
-				// 数据流调试：记录AI比较服务调用开始
-				this.logger.log('[AI Comparison Flow] 🤖 Calling AI service for comprehensive comparison analysis');
-				this.logger.log(`[AI Comparison Flow] 📊 AI Comparison Input summary - Files: ${validFileData.length}, Total diff size: ${validFileData.reduce((total, file) => total + file.diffContent.length, 0)} chars`);
-
-				const aiCallStartTime = Date.now();
-
-				// 使用AI服务进行综合分析
-				overallAnalysis = await this.generateComprehensiveComparisonAnalysis(
-					fileChanges,
-					validFileData,
-					this.logger
-				);
-
-				const aiCallEndTime = Date.now();
-				this.logger.log(`[AI Comparison Flow] 🤖 AI comparison service call completed in ${aiCallEndTime - aiCallStartTime}ms`);
-				this.logger.log(`[AI Comparison Flow] 📋 AI Comparison Response received - Has summary: ${!!overallAnalysis?.summary}, Length: ${overallAnalysis?.summary?.length || 0} chars`);
+			if (eligibleFiles.length === 0) {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					error: 'No readable files found for comparison analysis',
+					errorType: 'no_readable_files',
+					details: {
+						totalFiles: fileChanges.length,
+						message: 'The selected commits contain no files that can be analyzed by AI for comparison.'
+					}
+				});
+				return;
 			}
 
-			// 如果没有AI分析结果，提供基础统计信息
-			if (!overallAnalysis) {
-				this.logger.log('[AI Comparison Flow] ⚠️ No AI comparison analysis result, falling back to basic comparison stats');
-				const stats = this.generateComparisonStats(fileChanges);
-				overallAnalysis = {
-					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
-				};
+			// 限制分析的文件数量
+			const filesToAnalyze = eligibleFiles.slice(0, aiConfig.maxFilesPerAnalysis);
+			this.logger.log(`Found ${eligibleFiles.length} eligible files for comparison analysis out of ${fileChanges.length} total files, analyzing ${filesToAnalyze.length}`);
+
+			// 发送进度更新
+			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+				status: 'analyzing',
+				progress: {
+					current: 0,
+					total: filesToAnalyze.length,
+					message: `Comparing ${filesToAnalyze.length} files...`
+				}
+			});
+
+			// 获取文件内容和差异
+			const fileAnalysisData = [];
+			for (let i = 0; i < filesToAnalyze.length; i++) {
+				const file = filesToAnalyze[i];
+				try {
+					const diffContent = await this.getDiffBetweenRevisions(repo, fromHash, toHash, file.newFilePath);
+
+					if (diffContent) {
+						// 更新进度
+						this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+							status: 'analyzing',
+							progress: {
+								current: i + 1,
+								total: filesToAnalyze.length,
+								message: `Processing ${file.newFilePath}...`
+							}
+						});
+
+						fileAnalysisData.push({
+							filePath: file.newFilePath,
+							diffContent: diffContent,
+							contentBefore: null,
+							contentAfter: null,
+							type: file.type
+						});
+					}
+				} catch (error) {
+					this.logger.log(`Failed to get diff for file ${file.newFilePath}: ${error}`);
+				}
 			}
 
-			// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
-			this.logger.log(`[AI Comparison Flow] 📤 Sending final comparison analysis update for ${originalCommitHash}..${originalCompareWithHash}`);
-			this.logger.log(`[AI Comparison Flow] 📊 Final comparison analysis summary preview: ${overallAnalysis.summary.substring(0, 100)}...`);
-			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, overallAnalysis);
-			this.logger.log(`[AI Comparison Flow] ✅ Comparison analysis completed successfully for ${originalCommitHash}..${originalCompareWithHash}`);
+			if (fileAnalysisData.length === 0) {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					error: 'Failed to extract file differences for comparison',
+					errorType: 'diff_extraction_failed',
+					details: {
+						message: 'Could not generate diffs for the files between these commits.'
+					}
+				});
+				return;
+			}
+
+			// 生成 AI 分析
+			const analysis = await this.generateComprehensiveComparisonAnalysis(fileChanges, fileAnalysisData, this.logger);
+
+			if (analysis) {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					...analysis,
+					status: 'completed',
+					filesAnalyzed: fileAnalysisData.length,
+					totalFiles: fileChanges.length
+				});
+			} else {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					error: 'AI comparison analysis failed to generate results',
+					errorType: 'analysis_failed',
+					details: {
+						message: 'The AI service processed the file differences but could not generate meaningful comparison analysis.'
+					}
+				});
+			}
 
 		} catch (error) {
-			this.logger.logError(`[AI Comparison Flow] ❌ AI comparison analysis failed for ${fromHash}..${toHash}: ${error}`);
-			this.logger.logError(`[AI Comparison Flow] 🔍 Error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+			this.logger.logError(`Comparison analysis failed between ${fromHash} and ${toHash}: ${error}`);
 
-			// 发送错误状态的AI分析 - 使用原始的commitHash和compareWithHash
-			const errorAnalysis = {
-				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
-			};
-			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, errorAnalysis);
+			// 根据错误类型发送相应的错误信息
+			if (error instanceof Error) {
+				if (error.message.includes('timeout') || error.message.includes('TIMEOUT')) {
+					this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+						error: 'AI comparison analysis timed out',
+						errorType: 'timeout',
+						details: {
+							message: 'The comparison analysis took too long to complete. This may be due to processing a large number of files or temporary service issues.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('ECONNREFUSED') || error.message.includes('ENOTFOUND')) {
+					this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+						error: 'AI service is unavailable',
+						errorType: 'service_unavailable',
+						details: {
+							message: 'Could not connect to the AI analysis service. Please check your AI service configuration and network connectivity.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('401') || error.message.includes('403') || error.message.includes('authentication')) {
+					this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+						error: 'Authentication failed',
+						errorType: 'authentication_failed',
+						details: {
+							message: 'AI service authentication failed. Please check your API key or credentials in the settings.'
+						},
+						technicalError: error.message
+					});
+				} else if (error.message.includes('429') || error.message.includes('rate limit')) {
+					this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+						error: 'Rate limit exceeded',
+						errorType: 'rate_limited',
+						details: {
+							message: 'Too many requests to the AI service. Please wait a moment before trying again.'
+						},
+						technicalError: error.message
+					});
+				} else {
+					this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+						error: 'AI comparison analysis encountered an unexpected error',
+						errorType: 'unknown_error',
+						details: {
+							message: 'An unexpected error occurred during comparison analysis. Please try again or check the logs for more details.'
+						},
+						technicalError: error.message
+					});
+				}
+			} else {
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					error: 'AI comparison analysis failed with unknown error',
+					errorType: 'unknown_error',
+					details: {
+						message: 'An unknown error occurred during comparison analysis.'
+					}
+				});
+			}
 		}
+	}
+
+	/**
+	 * Filter eligible files for comparison with timeout and progress tracking
+	 */
+	private async filterEligibleFilesForComparison(
+		fileChanges: GitFileChange[],
+		aiConfig: any,
+		repo: string,
+		commitHash: string,
+		compareWithHash: string,
+		timeoutMs: number = 10000
+	): Promise<GitFileChange[]> {
+		const startTime = Date.now();
+		const eligibleFiles: GitFileChange[] = [];
+
+		this.logger.log(`Filtering ${fileChanges.length} files for comparison eligibility`);
+
+		for (let i = 0; i < fileChanges.length; i++) {
+			// 检查超时
+			if (Date.now() - startTime > timeoutMs) {
+				this.logger.log(`File eligibility check timed out after processing ${i}/${fileChanges.length} files`);
+				break;
+			}
+
+			// 每处理10个文件更新一次进度
+			if (i % 10 === 0) {
+				this.sendAIAnalysisUpdate(commitHash, compareWithHash, {
+					status: 'analyzing',
+					progress: {
+						current: i,
+						total: fileChanges.length,
+						message: `Checking file eligibility (${i}/${fileChanges.length})...`
+					}
+				});
+			}
+
+			const file = fileChanges[i];
+
+			try {
+				// 为每个文件设置更短的超时
+				const isEligible = await Promise.race([
+					this.isFileEligibleForAIAnalysis(file, aiConfig, repo),
+					new Promise<boolean>((_, reject) =>
+						setTimeout(() => reject(new Error('File check timeout')), 1000)
+					)
+				]);
+
+				if (isEligible) {
+					eligibleFiles.push(file);
+				}
+			} catch (error) {
+				this.logger.log(`Failed to check eligibility for ${file.newFilePath}: ${error}`);
+				// 如果检测失败，使用简单的扩展名检查作为回退
+				const ext = file.newFilePath.substring(file.newFilePath.lastIndexOf('.')).toLowerCase();
+				if (aiConfig.supportedFileExtensions &&
+					aiConfig.supportedFileExtensions.some((supportedExt: string) => ext === supportedExt.toLowerCase())) {
+					eligibleFiles.push(file);
+				}
+			}
+		}
+
+		this.logger.log(`File eligibility check completed: ${eligibleFiles.length}/${fileChanges.length} eligible`);
+		return eligibleFiles;
 	}
 
 	/**
@@ -1050,11 +1615,86 @@ ${index + 1}. 文件: ${fileData.filePath}
 	// Helper function to get raw diff (needed for AI service)
 	private async getDiffBetweenRevisions(repo: string, fromHash: string, toHash: string, filePath: string): Promise<string | null> {
 		try {
+			// 处理第一个commit的特殊情况：当fromHash和toHash相同时，表示这是第一个提交
+			if (fromHash === toHash) {
+				// 对于第一个提交，显示文件的完整内容作为"新增"
+				try {
+					const fileContent = await this.spawnGit(['show', `${toHash}:${filePath}`], repo, (stdout) => stdout.toString());
+					// 将文件内容格式化为diff格式
+					const lines = fileContent.split('\n');
+					let diffContent = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+					diffContent += lines.map(line => '+' + line).join('\n');
+					this.logger.log(`Generated diff for first commit file ${filePath}`);
+					return diffContent;
+				} catch (error) {
+					this.logger.log(`Failed to get file content for first commit ${toHash}:${filePath}: ${error}`);
+					return null;
+				}
+			}
+
+			// 处理fromHash以^结尾的情况（有父提交的提交）
+			if (fromHash.endsWith('^')) {
+				const commitHash = fromHash.slice(0, -1);
+				// 检查这个commit是否有父提交
+				const parentResult = await this.spawnGit(['rev-list', '--parents', '-n', '1', commitHash], repo, (stdout) => {
+					const parts = stdout.trim().split(' ');
+					return parts.length > 1; // 如果有多个部分，说明有父提交
+				}).catch(() => false);
+
+				if (!parentResult) {
+					// 这是第一个commit，没有父提交，显示文件的完整内容作为"新增"
+					try {
+						const fileContent = await this.spawnGit(['show', `${toHash}:${filePath}`], repo, (stdout) => stdout.toString());
+						// 将文件内容格式化为diff格式
+						const lines = fileContent.split('\n');
+						let diffContent = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+						diffContent += lines.map(line => '+' + line).join('\n');
+						return diffContent;
+					} catch (error) {
+						this.logger.log(`Failed to get file content for first commit ${toHash}:${filePath}: ${error}`);
+						return null;
+					}
+				}
+			}
+
+			// 标准的diff命令
 			const args = ['diff', fromHash, toHash, '--', filePath];
 			return await this.spawnGit(args, repo, (stdout) => stdout.toString());
 		} catch (error) {
 			this.logger.logError(`Failed to get raw diff for ${filePath} between ${fromHash} and ${toHash}: ${error}`);
-			return null;
+
+			// 如果标准diff失败，尝试检测是否是因为浅克隆导致的父提交不存在
+			// 这主要处理浅克隆场景下，fromHash 包含 ^ 但父提交在浅克隆中不存在的情况
+			if (fromHash.endsWith('^')) {
+				this.logger.log(`Attempting to handle shallow clone scenario for ${filePath} (fromHash ends with ^)`);
+				try {
+					const fileContent = await this.spawnGit(['show', `${toHash}:${filePath}`], repo, (stdout) => stdout.toString());
+					// 将文件内容格式化为diff格式
+					const lines = fileContent.split('\n');
+					let diffContent = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+					diffContent += lines.map(line => '+' + line).join('\n');
+					this.logger.log(`Successfully generated diff for ${filePath} using file content fallback for shallow clone`);
+					return diffContent;
+				} catch (fallbackError) {
+					this.logger.logError(`Shallow clone fallback also failed for ${filePath}: ${fallbackError}`);
+					return null;
+				}
+			}
+
+			// 对于其他类型的diff失败，也尝试使用文件内容作为fallback
+			this.logger.log(`Attempting general fallback for ${filePath}`);
+			try {
+				const fileContent = await this.spawnGit(['show', `${toHash}:${filePath}`], repo, (stdout) => stdout.toString());
+				// 将文件内容格式化为diff格式
+				const lines = fileContent.split('\n');
+				let diffContent = `--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`;
+				diffContent += lines.map(line => '+' + line).join('\n');
+				this.logger.log(`Successfully generated diff for ${filePath} using general fallback`);
+				return diffContent;
+			} catch (fallbackError) {
+				this.logger.logError(`General fallback also failed for ${filePath}: ${fallbackError}`);
+				return null;
+			}
 		}
 	}
 
@@ -2468,8 +3108,10 @@ ${index + 1}. 文件: ${fileData.filePath}
 	 * @returns Promise<boolean> True if the file should be analyzed
 	 */
 	private async isFileEligibleForAIAnalysis(fileChange: GitFileChange, aiConfig: any, repo?: string): Promise<boolean> {
-		// 只分析修改和重命名的文件
-		if (fileChange.type !== GitFileStatus.Modified && fileChange.type !== GitFileStatus.Renamed) {
+		// 分析新增、修改和重命名的文件（排除删除的文件，因为没有内容可分析）
+		if (fileChange.type !== GitFileStatus.Added &&
+			fileChange.type !== GitFileStatus.Modified &&
+			fileChange.type !== GitFileStatus.Renamed) {
 			return false;
 		}
 
