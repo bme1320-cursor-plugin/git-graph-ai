@@ -389,31 +389,49 @@ export class DataSource extends Disposable {
 		aiConfig: any
 	): Promise<void> {
 		try {
+			// 数据流调试：记录分析开始
+			this.logger.log(`[AI Analysis Flow] 🚀 Starting commit analysis for ${commitHash.substring(0, 8)}`);
+			this.logger.log(`[AI Analysis Flow] 📊 Input data - Repo: ${repo}, FromCommit: ${fromCommit}, FileChanges: ${commitDetails.fileChanges?.length || 0}`);
+			this.logger.log(`[AI Analysis Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}, Timeout: ${aiConfig.timeout}`);
+
 			const eligibleFiles = commitDetails.fileChanges
 				.filter((fileChange: any) => this.isFileEligibleForAIAnalysis(fileChange, aiConfig))
 				.slice(0, aiConfig.maxFilesPerAnalysis);
 
+			// 数据流调试：记录文件过滤结果
+			this.logger.log(`[AI Analysis Flow] 🔍 File filtering - Total: ${commitDetails.fileChanges?.length || 0}, Eligible: ${eligibleFiles.length}, Max allowed: ${aiConfig.maxFilesPerAnalysis}`);
+
 			if (eligibleFiles.length === 0) {
 				// 如果没有符合条件的文件，提供基础统计信息
+				this.logger.log('[AI Analysis Flow] ⚠️ No eligible files found for AI analysis, generating basic stats');
 				const stats = this.generateCommitStats(commitDetails.fileChanges);
 				const basicAnalysis = {
 					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
 				};
 
 				// 发送AI分析更新消息
+				this.logger.log(`[AI Analysis Flow] 📤 Sending basic analysis update for ${commitHash.substring(0, 8)}`);
 				this.sendAIAnalysisUpdate(commitHash, null, basicAnalysis);
 				return;
 			}
 
+			// 数据流调试：记录开始收集文件数据
+			this.logger.log(`[AI Analysis Flow] 📂 Starting to collect file diff data for ${eligibleFiles.length} files`);
+			const fileDataStartTime = Date.now();
+
 			// 收集所有文件的差异内容
 			const fileAnalysisData = await Promise.all(
-				eligibleFiles.map(async (fileChange: any) => {
+				eligibleFiles.map(async (fileChange: any, index: number) => {
 					try {
+						this.logger.log(`[AI Analysis Flow] 📄 Processing file ${index + 1}/${eligibleFiles.length}: ${fileChange.newFilePath}`);
+
 						const [contentBefore, contentAfter, diffContent] = await Promise.all([
 							this.getCommitFile(repo, fromCommit, fileChange.oldFilePath).catch(() => null),
 							this.getCommitFile(repo, commitHash, fileChange.newFilePath).catch(() => null),
 							this.getDiffBetweenRevisions(repo, fromCommit, commitHash, fileChange.newFilePath)
 						]);
+
+						this.logger.log(`[AI Analysis Flow] 📝 File data collected for ${fileChange.newFilePath}: beforeContent=${contentBefore ? contentBefore.length : 0}chars, afterContent=${contentAfter ? contentAfter.length : 0}chars, diffLength=${diffContent ? diffContent.length : 0}chars`);
 
 						if (diffContent && diffContent.trim() !== '') {
 							return {
@@ -423,9 +441,11 @@ export class DataSource extends Disposable {
 								contentAfter: contentAfter,
 								type: fileChange.type
 							};
+						} else {
+							this.logger.log(`[AI Analysis Flow] ⚠️ Empty diff content for ${fileChange.newFilePath}, skipping`);
 						}
 					} catch (error) {
-						this.logger.logError(`Failed to get content/diff for ${fileChange.newFilePath}: ${error}`);
+						this.logger.logError(`[AI Analysis Flow] ❌ Failed to get content/diff for ${fileChange.newFilePath}: ${error}`);
 					}
 					return null;
 				})
@@ -439,18 +459,32 @@ export class DataSource extends Disposable {
 				type: any;
 			} => data !== null);
 
+			const fileDataEndTime = Date.now();
+			this.logger.log(`[AI Analysis Flow] ✅ File data collection completed in ${fileDataEndTime - fileDataStartTime}ms - Valid files: ${validFileData.length}/${eligibleFiles.length}`);
+
 			let overallAnalysis = null;
 			if (validFileData.length > 0) {
+				// 数据流调试：记录AI服务调用开始
+				this.logger.log('[AI Analysis Flow] 🤖 Calling AI service for comprehensive analysis');
+				this.logger.log(`[AI Analysis Flow] 📊 AI Input summary - Files: ${validFileData.length}, Total diff size: ${validFileData.reduce((total, file) => total + file.diffContent.length, 0)} chars`);
+
+				const aiCallStartTime = Date.now();
+
 				// 使用AI服务进行综合分析
 				overallAnalysis = await this.generateComprehensiveCommitAnalysis(
 					commitDetails,
 					validFileData,
 					this.logger
 				);
+
+				const aiCallEndTime = Date.now();
+				this.logger.log(`[AI Analysis Flow] 🤖 AI service call completed in ${aiCallEndTime - aiCallStartTime}ms`);
+				this.logger.log(`[AI Analysis Flow] 📋 AI Response received - Has summary: ${!!overallAnalysis?.summary}, Length: ${overallAnalysis?.summary?.length || 0} chars`);
 			}
 
 			// 如果没有AI分析结果，提供基础统计信息
 			if (!overallAnalysis) {
+				this.logger.log('[AI Analysis Flow] ⚠️ No AI analysis result, falling back to basic stats');
 				const stats = this.generateCommitStats(commitDetails.fileChanges);
 				overallAnalysis = {
 					summary: `<div class="ai-commit-summary"><p><strong>提交变更概览：</strong></p><p>${stats}</p><p>此提交主要包含非文本文件变更或新增/删除操作。</p></div>`
@@ -458,10 +492,15 @@ export class DataSource extends Disposable {
 			}
 
 			// 发送AI分析更新消息
+			this.logger.log(`[AI Analysis Flow] 📤 Sending final analysis update for ${commitHash.substring(0, 8)}`);
+			this.logger.log(`[AI Analysis Flow] 📊 Final analysis summary preview: ${overallAnalysis.summary.substring(0, 100)}...`);
 			this.sendAIAnalysisUpdate(commitHash, null, overallAnalysis);
+			this.logger.log(`[AI Analysis Flow] ✅ Commit analysis completed successfully for ${commitHash.substring(0, 8)}`);
 
 		} catch (error) {
-			this.logger.logError(`AI analysis failed for commit ${commitHash}: ${error}`);
+			this.logger.logError(`[AI Analysis Flow] ❌ AI analysis failed for commit ${commitHash}: ${error}`);
+			this.logger.logError(`[AI Analysis Flow] 🔍 Error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+
 			// 发送错误状态的AI分析
 			const errorAnalysis = {
 				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
@@ -606,30 +645,48 @@ export class DataSource extends Disposable {
 		originalCompareWithHash: string
 	): Promise<void> {
 		try {
+			// 数据流调试：记录比较分析开始
+			this.logger.log(`[AI Comparison Flow] 🚀 Starting comparison analysis for ${fromHash.substring(0, 8)}..${toHash.substring(0, 8)}`);
+			this.logger.log(`[AI Comparison Flow] 📊 Input data - Repo: ${repo}, FileChanges: ${fileChanges.length}, Original: ${originalCommitHash}..${originalCompareWithHash}`);
+			this.logger.log(`[AI Comparison Flow] ⚙️ AI Config - Enabled: ${aiConfig.enabled}, MaxFiles: ${aiConfig.maxFilesPerAnalysis}`);
+
 			// 获取符合AI分析条件的文件
 			const eligibleFiles = fileChanges.filter(file => this.isFileEligibleForAIAnalysis(file, aiConfig));
 
+			// 数据流调试：记录文件过滤结果
+			this.logger.log(`[AI Comparison Flow] 🔍 File filtering - Total: ${fileChanges.length}, Eligible: ${eligibleFiles.length}, Max allowed: ${aiConfig.maxFilesPerAnalysis}`);
+
 			if (eligibleFiles.length === 0) {
 				// 如果没有符合条件的文件，提供基础统计信息
+				this.logger.log('[AI Comparison Flow] ⚠️ No eligible files found for AI analysis, generating basic comparison stats');
 				const stats = this.generateComparisonStats(fileChanges);
 				const basicAnalysis = {
 					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
 				};
 
 				// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
+				this.logger.log(`[AI Comparison Flow] 📤 Sending basic comparison analysis update for ${originalCommitHash}..${originalCompareWithHash}`);
 				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, basicAnalysis);
 				return;
 			}
 
+			// 数据流调试：记录开始收集比较文件数据
+			this.logger.log(`[AI Comparison Flow] 📂 Starting to collect comparison file diff data for ${eligibleFiles.length} files`);
+			const fileDataStartTime = Date.now();
+
 			// 收集所有文件的差异内容
 			const fileAnalysisData = await Promise.all(
-				eligibleFiles.map(async (fileChange) => {
+				eligibleFiles.map(async (fileChange, index) => {
 					try {
+						this.logger.log(`[AI Comparison Flow] 📄 Processing comparison file ${index + 1}/${eligibleFiles.length}: ${fileChange.newFilePath}`);
+
 						const [contentBefore, contentAfter, diffContent] = await Promise.all([
 							this.getCommitFile(repo, fromHash, fileChange.oldFilePath).catch(() => null),
 							this.getCommitFile(repo, toHash === UNCOMMITTED ? 'HEAD' : toHash, fileChange.newFilePath).catch(() => null),
 							this.getDiffBetweenRevisions(repo, fromHash, toHash === UNCOMMITTED ? '' : toHash, fileChange.newFilePath)
 						]);
+
+						this.logger.log(`[AI Comparison Flow] 📝 Comparison file data collected for ${fileChange.newFilePath}: beforeContent=${contentBefore ? contentBefore.length : 0}chars, afterContent=${contentAfter ? contentAfter.length : 0}chars, diffLength=${diffContent ? diffContent.length : 0}chars`);
 
 						if (diffContent && diffContent.trim() !== '') {
 							return {
@@ -639,9 +696,11 @@ export class DataSource extends Disposable {
 								contentAfter: contentAfter,
 								type: fileChange.type
 							};
+						} else {
+							this.logger.log(`[AI Comparison Flow] ⚠️ Empty diff content for comparison file ${fileChange.newFilePath}, skipping`);
 						}
 					} catch (error) {
-						this.logger.logError(`Failed to get content/diff for comparison file ${fileChange.newFilePath}: ${error}`);
+						this.logger.logError(`[AI Comparison Flow] ❌ Failed to get content/diff for comparison file ${fileChange.newFilePath}: ${error}`);
 					}
 					return null;
 				})
@@ -655,18 +714,32 @@ export class DataSource extends Disposable {
 				type: any;
 			} => data !== null);
 
+			const fileDataEndTime = Date.now();
+			this.logger.log(`[AI Comparison Flow] ✅ Comparison file data collection completed in ${fileDataEndTime - fileDataStartTime}ms - Valid files: ${validFileData.length}/${eligibleFiles.length}`);
+
 			let overallAnalysis = null;
 			if (validFileData.length > 0) {
+				// 数据流调试：记录AI比较服务调用开始
+				this.logger.log('[AI Comparison Flow] 🤖 Calling AI service for comprehensive comparison analysis');
+				this.logger.log(`[AI Comparison Flow] 📊 AI Comparison Input summary - Files: ${validFileData.length}, Total diff size: ${validFileData.reduce((total, file) => total + file.diffContent.length, 0)} chars`);
+
+				const aiCallStartTime = Date.now();
+
 				// 使用AI服务进行综合分析
 				overallAnalysis = await this.generateComprehensiveComparisonAnalysis(
 					fileChanges,
 					validFileData,
 					this.logger
 				);
+
+				const aiCallEndTime = Date.now();
+				this.logger.log(`[AI Comparison Flow] 🤖 AI comparison service call completed in ${aiCallEndTime - aiCallStartTime}ms`);
+				this.logger.log(`[AI Comparison Flow] 📋 AI Comparison Response received - Has summary: ${!!overallAnalysis?.summary}, Length: ${overallAnalysis?.summary?.length || 0} chars`);
 			}
 
 			// 如果没有AI分析结果，提供基础统计信息
 			if (!overallAnalysis) {
+				this.logger.log('[AI Comparison Flow] ⚠️ No AI comparison analysis result, falling back to basic comparison stats');
 				const stats = this.generateComparisonStats(fileChanges);
 				overallAnalysis = {
 					summary: `<div class="ai-comparison-summary"><p><strong>版本比较概览：</strong></p><p>${stats}</p><p>未检测到可分析的文本文件变更。</p></div>`
@@ -674,10 +747,15 @@ export class DataSource extends Disposable {
 			}
 
 			// 发送AI分析更新消息 - 使用原始的commitHash和compareWithHash
+			this.logger.log(`[AI Comparison Flow] 📤 Sending final comparison analysis update for ${originalCommitHash}..${originalCompareWithHash}`);
+			this.logger.log(`[AI Comparison Flow] 📊 Final comparison analysis summary preview: ${overallAnalysis.summary.substring(0, 100)}...`);
 			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, overallAnalysis);
+			this.logger.log(`[AI Comparison Flow] ✅ Comparison analysis completed successfully for ${originalCommitHash}..${originalCompareWithHash}`);
 
 		} catch (error) {
-			this.logger.logError(`AI comparison analysis failed for ${fromHash}..${toHash}: ${error}`);
+			this.logger.logError(`[AI Comparison Flow] ❌ AI comparison analysis failed for ${fromHash}..${toHash}: ${error}`);
+			this.logger.logError(`[AI Comparison Flow] 🔍 Error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+
 			// 发送错误状态的AI分析 - 使用原始的commitHash和compareWithHash
 			const errorAnalysis = {
 				summary: '<div class="ai-analysis-error"><p>AI分析暂时不可用，请稍后重试。</p></div>'
@@ -705,22 +783,39 @@ export class DataSource extends Disposable {
 		logger: Logger
 	): Promise<{ summary: string } | null> {
 		try {
+			// 数据流调试：记录AI服务调用详情
+			logger.log('[AI Service Call] 🎯 Starting comprehensive commit analysis via AI service');
+			logger.log(`[AI Service Call] 📊 Commit data - Hash: ${commitDetails.hash?.substring(0, 8)}, Author: ${commitDetails.author}, FileCount: ${fileAnalysisData.length}`);
+
+			// 构建详细的提示词
+			const prompt = this.buildComprehensiveAnalysisPrompt(commitDetails, fileAnalysisData);
+
+			// 数据流调试：记录提示词信息
+			logger.log(`[AI Service Call] 📝 Generated prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_commit_analysis',
-				this.buildComprehensiveAnalysisPrompt(commitDetails, fileAnalysisData),
+				prompt,
 				null,
 				null,
 				logger
 			);
 
 			if (analysis) {
+				// 数据流调试：记录AI服务响应
+				logger.log(`[AI Service Call] ✅ AI service returned analysis - Summary length: ${analysis.summary?.length || 0} chars`);
+				logger.log(`[AI Service Call] 📋 Analysis summary preview: "${analysis.summary?.substring(0, 150)}..."`);
+
 				return {
 					summary: `<div class="ai-commit-summary">${analysis.summary}</div>`
 				};
+			} else {
+				logger.log('[AI Service Call] ⚠️ AI service returned null analysis for commit');
 			}
 		} catch (error) {
-			logger.logError(`Failed to generate comprehensive commit analysis: ${error}`);
+			logger.logError(`[AI Service Call] ❌ Failed to generate comprehensive commit analysis: ${error}`);
+			logger.logError(`[AI Service Call] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
 	}
@@ -744,22 +839,39 @@ export class DataSource extends Disposable {
 		logger: Logger
 	): Promise<{ summary: string } | null> {
 		try {
+			// 数据流调试：记录AI比较服务调用详情
+			logger.log('[AI Service Call] 🎯 Starting comprehensive comparison analysis via AI service');
+			logger.log(`[AI Service Call] 📊 Comparison data - Total changes: ${fileChanges.length}, Analyzed files: ${fileAnalysisData.length}`);
+
+			// 构建详细的比较提示词
+			const prompt = this.buildComprehensiveComparisonPrompt(fileChanges, fileAnalysisData);
+
+			// 数据流调试：记录比较提示词信息
+			logger.log(`[AI Service Call] 📝 Generated comparison prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_comparison_analysis',
-				this.buildComprehensiveComparisonPrompt(fileChanges, fileAnalysisData),
+				prompt,
 				null,
 				null,
 				logger
 			);
 
 			if (analysis) {
+				// 数据流调试：记录AI比较服务响应
+				logger.log(`[AI Service Call] ✅ AI comparison service returned analysis - Summary length: ${analysis.summary?.length || 0} chars`);
+				logger.log(`[AI Service Call] 📋 Comparison analysis summary preview: "${analysis.summary?.substring(0, 150)}..."`);
+
 				return {
 					summary: `<div class="ai-comparison-summary">${analysis.summary}</div>`
 				};
+			} else {
+				logger.log('[AI Service Call] ⚠️ AI comparison service returned null analysis');
 			}
 		} catch (error) {
-			logger.logError(`Failed to generate comprehensive comparison analysis: ${error}`);
+			logger.logError(`[AI Service Call] ❌ Failed to generate comprehensive comparison analysis: ${error}`);
+			logger.logError(`[AI Service Call] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
 	}
@@ -2372,8 +2484,22 @@ ${index + 1}. 文件: ${fileData.filePath}
 	 * @param aiAnalysis The AI analysis result
 	 */
 	private sendAIAnalysisUpdate(commitHash: string, compareWithHash: string | null, aiAnalysis: any) {
+		// 数据流调试：记录AI分析更新发送
+		this.logger.log('[AI Update Callback] 📡 Sending AI analysis update');
+		this.logger.log(`[AI Update Callback] 🔗 Target - CommitHash: ${commitHash}, CompareWithHash: ${compareWithHash || 'None'}`);
+		this.logger.log(`[AI Update Callback] 📊 Analysis data - HasSummary: ${!!aiAnalysis?.summary}, SummaryLength: ${aiAnalysis?.summary?.length || 0} chars`);
+
 		if (this.aiAnalysisUpdateCallback) {
-			this.aiAnalysisUpdateCallback(commitHash, compareWithHash, aiAnalysis);
+			try {
+				this.logger.log('[AI Update Callback] ✅ Callback exists, invoking update');
+				this.aiAnalysisUpdateCallback(commitHash, compareWithHash, aiAnalysis);
+				this.logger.log(`[AI Update Callback] 📤 Successfully sent AI analysis update for ${commitHash}`);
+			} catch (error) {
+				this.logger.logError(`[AI Update Callback] ❌ Failed to invoke AI analysis callback: ${error}`);
+				this.logger.logError(`[AI Update Callback] 🔍 Callback error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+			}
+		} else {
+			this.logger.log('[AI Update Callback] ⚠️ No AI analysis update callback registered - update will be lost');
 		}
 	}
 
@@ -2552,22 +2678,30 @@ ${index + 1}. 文件: ${fileData.filePath}
 		commits: GitFileHistoryCommit[]
 	): Promise<void> {
 		try {
-			this.logger.log(`[File History AI] Starting analysis for ${filePath}`);
-			// 分析文件演进模式
-			const analysis = await this.generateFileHistoryAnalysis(filePath, commits, this.logger);
+			// 数据流调试：记录文件历史分析开始
+			this.logger.log(`[File History AI Flow] 🚀 Starting file history analysis for ${filePath}`);
+			this.logger.log(`[File History AI Flow] 📊 Input data - FilePath: ${filePath}, Commits: ${commits.length}`);
+			this.logger.log(`[File History AI Flow] 📝 Commit range: ${commits.length > 0 ? `${commits[commits.length - 1].hash.substring(0, 8)} to ${commits[0].hash.substring(0, 8)}` : 'No commits'}`);
 
-			this.logger.log(`[File History AI] Generated analysis for ${filePath}: ${JSON.stringify(analysis)}`);
+			// 分析文件演进模式
+			const analysisStartTime = Date.now();
+			const analysis = await this.generateFileHistoryAnalysis(filePath, commits, this.logger);
+			const analysisEndTime = Date.now();
+
+			this.logger.log(`[File History AI Flow] ⏱️ File history analysis completed in ${analysisEndTime - analysisStartTime}ms`);
+			this.logger.log(`[File History AI Flow] 📋 Generated analysis result: ${JSON.stringify(analysis)}`);
 
 			if (analysis) {
-				this.logger.log(`[File History AI] Sending AI analysis update for ${filePath}`);
+				this.logger.log(`[File History AI Flow] ✅ Sending AI analysis update for ${filePath}`);
 				// 发送文件历史AI分析更新消息
 				this.sendFileHistoryAIAnalysisUpdate(filePath, analysis);
-				this.logger.log(`[File History AI] Sent AI analysis update for ${filePath}`);
+				this.logger.log(`[File History AI Flow] 📤 Successfully sent AI analysis update for ${filePath}`);
 			} else {
-				this.logger.log(`[File History AI] No analysis generated for ${filePath}`);
+				this.logger.log(`[File History AI Flow] ⚠️ No analysis generated for ${filePath} - skipping update`);
 			}
 		} catch (error) {
-			this.logger.logError(`File history AI analysis failed for ${filePath}: ${error}`);
+			this.logger.logError(`[File History AI Flow] ❌ File history AI analysis failed for ${filePath}: ${error}`);
+			this.logger.logError(`[File History AI Flow] 🔍 Error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
 		}
 	}
 
@@ -2580,30 +2714,53 @@ ${index + 1}. 文件: ${fileData.filePath}
 		logger: Logger
 	): Promise<FileHistoryAIAnalysis | null> {
 		try {
+			// 数据流调试：记录文件历史分析服务调用开始
+			logger.log(`[File History AI Service] 🎯 Starting file history analysis service call for ${filePath}`);
+			logger.log(`[File History AI Service] 📊 File data - Path: ${filePath}, Commits: ${commits.length}`);
+
+			if (commits.length > 0) {
+				const firstCommit = commits[commits.length - 1];
+				const lastCommit = commits[0];
+				logger.log(`[File History AI Service] 📝 Commit range - First: ${firstCommit.hash.substring(0, 8)} (${new Date(firstCommit.authorDate * 1000).toLocaleDateString()})`);
+				logger.log(`[File History AI Service] 📝 Commit range - Last: ${lastCommit.hash.substring(0, 8)} (${new Date(lastCommit.authorDate * 1000).toLocaleDateString()})`);
+
+				// 统计贡献者信息
+				const authors = Array.from(new Set(commits.map(c => c.author)));
+				logger.log(`[File History AI Service] 👥 Contributors: ${authors.length} unique (${authors.slice(0, 3).join(', ')}${authors.length > 3 ? '...' : ''})`);
+			}
+
 			// 构建文件历史分析提示
 			const prompt = this.buildFileHistoryAnalysisPrompt(filePath, commits);
-			logger.log(`[File History AI] Built prompt for ${filePath}`);
+			logger.log(`[File History AI Service] 📝 Generated file history prompt - Length: ${prompt.length} chars`);
 
 			// 使用专门的文件历史分析服务
+			const serviceCallStartTime = Date.now();
 			const analysis = await analyzeFileHistory(
 				filePath,
 				prompt,
 				logger
 			);
+			const serviceCallEndTime = Date.now();
 
-			logger.log(`[File History AI] Raw AI service response for ${filePath}: ${JSON.stringify(analysis)}`);
+			logger.log(`[File History AI Service] ⏱️ AI service call completed in ${serviceCallEndTime - serviceCallStartTime}ms`);
+			logger.log(`[File History AI Service] 📋 Raw AI service response for ${filePath}: ${JSON.stringify(analysis)}`);
 
 			if (analysis && analysis.summary) {
-				logger.log(`[File History AI] Parsing analysis result for ${filePath}`);
+				logger.log(`[File History AI Service] 🔄 Parsing analysis result for ${filePath}`);
 				// 解析AI分析结果
+				const parseStartTime = Date.now();
 				const parsedAnalysis = this.parseFileHistoryAnalysis(analysis.summary);
-				logger.log(`[File History AI] Parsed analysis for ${filePath}: ${JSON.stringify(parsedAnalysis)}`);
+				const parseEndTime = Date.now();
+
+				logger.log(`[File History AI Service] ⏱️ Analysis parsing completed in ${parseEndTime - parseStartTime}ms`);
+				logger.log(`[File History AI Service] ✅ Successfully parsed analysis for ${filePath}: ${JSON.stringify(parsedAnalysis)}`);
 				return parsedAnalysis;
 			} else {
-				logger.log(`[File History AI] No valid analysis received for ${filePath}`);
+				logger.log(`[File History AI Service] ⚠️ No valid analysis received from AI service for ${filePath}`);
 			}
 		} catch (error) {
-			logger.logError(`Failed to generate file history analysis: ${error}`);
+			logger.logError(`[File History AI Service] ❌ Failed to generate file history analysis for ${filePath}: ${error}`);
+			logger.logError(`[File History AI Service] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
 	}
@@ -2802,9 +2959,23 @@ ${index + 1}. [${date}] ${commit.author}
 	 * Send file history AI analysis update
 	 */
 	private sendFileHistoryAIAnalysisUpdate(filePath: string, analysis: FileHistoryAIAnalysis) {
+		// 数据流调试：记录文件历史AI分析更新发送
+		this.logger.log('[File History AI Callback] 📡 Sending file history AI analysis update');
+		this.logger.log(`[File History AI Callback] 📁 Target file: ${filePath}`);
+		this.logger.log(`[File History AI Callback] 📊 Analysis data - Summary: ${analysis.summary?.length || 0} chars, KeyChanges: ${analysis.keyChanges?.length || 0}, Recommendations: ${analysis.recommendations?.length || 0}`);
+
 		if (this.aiAnalysisUpdateCallback) {
-			// 使用特殊的格式来标识这是文件历史分析
-			this.aiAnalysisUpdateCallback(`file_history:${filePath}`, null, analysis);
+			try {
+				this.logger.log('[File History AI Callback] ✅ Callback exists, invoking file history update');
+				// 使用特殊的格式来标识这是文件历史分析
+				this.aiAnalysisUpdateCallback(`file_history:${filePath}`, null, analysis);
+				this.logger.log(`[File History AI Callback] 📤 Successfully sent file history AI analysis update for ${filePath}`);
+			} catch (error) {
+				this.logger.logError(`[File History AI Callback] ❌ Failed to invoke file history AI analysis callback: ${error}`);
+				this.logger.logError(`[File History AI Callback] 🔍 Callback error details: ${error instanceof Error ? error.stack : 'Unknown error'}`);
+			}
+		} else {
+			this.logger.log('[File History AI Callback] ⚠️ No AI analysis update callback registered - file history update will be lost');
 		}
 	}
 
