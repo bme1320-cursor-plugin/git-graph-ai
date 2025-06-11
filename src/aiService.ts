@@ -308,26 +308,27 @@ export function checkAIServiceAvailability(logger?: Logger): Promise<boolean> {
 /**
  * Analyze file history using the dedicated endpoint
  * @param filePath The path of the file
- * @param prompt The analysis prompt
+ * @param payload The analysis payload
  * @param logger Optional logger instance
  * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileHistory(
 	filePath: string,
-	prompt: string,
+	payload: object,
 	logger?: Logger
 ): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
+		const payloadString = JSON.stringify(payload);
 		// 检查输入有效性
-		if (!prompt || prompt.trim() === '') {
-			logger?.log(`[AI Service] Skipping empty prompt for file history: ${filePath}`);
+		if (!payloadString || payloadString === '{}') {
+			logger?.log(`[AI Service] Skipping empty payload for file history: ${filePath}`);
 			resolve(null);
 			return;
 		}
 
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(prompt, `file_history:${filePath}`);
+			const cacheKey = cacheManager.generateCacheKey(payloadString, `file_history:${filePath}`);
 			const cachedResult = await cacheManager.get(cacheKey);
 			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file history: ${filePath}`);
@@ -338,7 +339,7 @@ export function analyzeFileHistory(
 
 		const postData = JSON.stringify({
 			file_path: filePath,
-			file_diff: prompt // 复用这个字段传递完整的提示词
+			file_diff: payloadString // 复用这个字段传递完整的JSON负载
 		});
 
 		const options: http.RequestOptions = {
@@ -373,7 +374,7 @@ export function analyzeFileHistory(
 
 							// 缓存结果
 							if (cacheManager) {
-								const cacheKey = cacheManager.generateCacheKey(prompt, `file_history:${filePath}`);
+								const cacheKey = cacheManager.generateCacheKey(payloadString, `file_history:${filePath}`);
 								await cacheManager.set(cacheKey, analysis);
 								logger?.log(`[AI Service] Cached file history result for: ${filePath}`);
 							}
@@ -417,26 +418,27 @@ export function analyzeFileHistory(
 /**
  * Analyze file version comparison using the dedicated endpoint
  * @param filePath The path of the file
- * @param prompt The analysis prompt
+ * @param payload The analysis payload
  * @param logger Optional logger instance
  * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileVersionComparison(
 	filePath: string,
-	prompt: string,
+	payload: object,
 	logger?: Logger
 ): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
+		const payloadString = JSON.stringify(payload);
 		// 检查输入有效性
-		if (!prompt || prompt.trim() === '') {
-			logger?.log(`[AI Service] Skipping empty prompt for file version comparison: ${filePath}`);
+		if (!payloadString || payloadString === '{}') {
+			logger?.log(`[AI Service] Skipping empty payload for file version comparison: ${filePath}`);
 			resolve(null);
 			return;
 		}
 
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
+			const cacheKey = cacheManager.generateCacheKey(payloadString, `file_version_comparison:${filePath}`);
 			const cachedResult = await cacheManager.get(cacheKey);
 			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file version comparison: ${filePath}`);
@@ -447,7 +449,7 @@ export function analyzeFileVersionComparison(
 
 		const postData = JSON.stringify({
 			file_path: filePath,
-			file_diff: prompt // 复用这个字段传递完整的提示词
+			file_diff: payloadString // 复用这个字段传递完整的JSON负载
 		});
 
 		const options: http.RequestOptions = {
@@ -479,7 +481,7 @@ export function analyzeFileVersionComparison(
 
 						// 缓存结果
 						if (cacheManager) {
-							const cacheKey = cacheManager.generateCacheKey(prompt, `file_version_comparison:${filePath}`);
+							const cacheKey = cacheManager.generateCacheKey(payloadString, `file_version_comparison:${filePath}`);
 							await cacheManager.set(cacheKey, analysis);
 						}
 

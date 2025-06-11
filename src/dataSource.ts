@@ -643,30 +643,6 @@ export class DataSource extends Disposable {
 	}
 
 	/**
-	 * Generate commit statistics for AI analysis
-	 * @param fileChanges Array of file changes
-	 * @returns Formatted statistics string
-	 */
-	private generateCommitStats(fileChanges: ReadonlyArray<GitFileChange>): string {
-		const stats = {
-			added: fileChanges.filter(f => f.type === GitFileStatus.Added).length,
-			modified: fileChanges.filter(f => f.type === GitFileStatus.Modified).length,
-			deleted: fileChanges.filter(f => f.type === GitFileStatus.Deleted).length,
-			renamed: fileChanges.filter(f => f.type === GitFileStatus.Renamed).length
-		};
-
-		const totalChanges = stats.added + stats.modified + stats.deleted + stats.renamed;
-
-		const parts = [];
-		if (stats.added > 0) parts.push(`${stats.added}个新增文件`);
-		if (stats.modified > 0) parts.push(`${stats.modified}个修改文件`);
-		if (stats.deleted > 0) parts.push(`${stats.deleted}个删除文件`);
-		if (stats.renamed > 0) parts.push(`${stats.renamed}个重命名文件`);
-
-		return `此提交共涉及 ${totalChanges} 个文件变更：${parts.join('，')}。`;
-	}
-
-	/**
 	 * Get the stash details for the Commit Details View.
 	 * @param repo The path of the repository.
 	 * @param commitHash The hash of the stash commit open in the Commit Details View.
@@ -950,15 +926,22 @@ export class DataSource extends Disposable {
 			logger.log(`[AI Service Call] 📊 Uncommitted data - FileCount: ${fileAnalysisData.length}`);
 
 			// 构建详细的提示词
-			const prompt = this.buildComprehensiveUncommittedAnalysisPrompt(fileAnalysisData);
+			const payload = {
+				fileAnalysisData: fileAnalysisData.map(f => ({
+					filePath: f.filePath,
+					type: f.type,
+					diffContent: f.diffContent.substring(0, 4000) + (f.diffContent.length > 4000 ? '...' : '')
+				}))
+			};
+			const payloadString = JSON.stringify(payload);
 
 			// 数据流调试：记录提示词信息
-			logger.log(`[AI Service Call] 📝 Generated uncommitted prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+			logger.log(`[AI Service Call] 📝 Generated uncommitted payload - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_uncommitted_analysis',
-				prompt,
+				payloadString,
 				null,
 				null,
 				logger
@@ -980,64 +963,6 @@ export class DataSource extends Disposable {
 			logger.logError(`[AI Service Call] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
-	}
-
-	/**
-	 * Build comprehensive analysis prompt for uncommitted changes
-	 * @param fileAnalysisData Array of file analysis data
-	 * @returns Formatted prompt for AI analysis
-	 */
-	private buildComprehensiveUncommittedAnalysisPrompt(
-		fileAnalysisData: Array<{
-			filePath: string;
-			diffContent: string;
-			contentBefore: string | null;
-			contentAfter: string | null;
-			type: GitFileStatus;
-		}>
-	): string {
-		const stats = this.generateCommitStats(fileAnalysisData.map(f => ({
-			type: f.type,
-			newFilePath: f.filePath,
-			oldFilePath: f.filePath
-		} as GitFileChange)));
-
-		let prompt = `请对以下未提交的代码变更进行综合分析，提供一个整体性的总结报告。
-
-未提交变更信息：
-- 类型: 工作区未提交变更
-- ${stats}
-
-主要文件变更：
-`;
-
-		fileAnalysisData.forEach((fileData, index) => {
-			prompt += `
-${index + 1}. 文件: ${fileData.filePath}
-   变更类型: ${this.getFileChangeTypeDescription(fileData.type)}
-   
-   差异内容:
-   \`\`\`diff
-   ${fileData.diffContent.substring(0, 1000)}${fileData.diffContent.length > 1000 ? '...' : ''}
-   \`\`\`
-`;
-		});
-
-		prompt += `
-请提供一个综合性的分析报告，包括：
-1. 未提交变更的主要目的和意图
-2. 涉及的核心功能或模块
-3. 变更的技术影响和业务价值
-4. 代码质量和架构方面的观察
-5. 提交建议（是否适合提交、需要注意的事项等）
-
-要求：
-- 使用中文回答
-- 重点关注变更的整体性和关联性，而非单个文件的细节
-- 控制在150字以内
-- 使用HTML格式，包含适当的段落和强调标签`;
-
-		return prompt;
 	}
 
 	/**
@@ -1367,15 +1292,27 @@ ${index + 1}. 文件: ${fileData.filePath}
 			logger.log(`[AI Service Call] 📊 Commit data - Hash: ${commitDetails.hash?.substring(0, 8)}, Author: ${commitDetails.author}, FileCount: ${fileAnalysisData.length}`);
 
 			// 构建详细的提示词
-			const prompt = this.buildComprehensiveAnalysisPrompt(commitDetails, fileAnalysisData);
+			const payload = {
+				commitDetails: {
+					hash: commitDetails.hash,
+					author: commitDetails.author,
+					body: commitDetails.body
+				},
+				fileAnalysisData: fileAnalysisData.map(f => ({
+					filePath: f.filePath,
+					type: f.type,
+					diffContent: f.diffContent.substring(0, 4000) + (f.diffContent.length > 4000 ? '...' : '')
+				}))
+			};
+			const payloadString = JSON.stringify(payload);
 
 			// 数据流调试：记录提示词信息
-			logger.log(`[AI Service Call] 📝 Generated prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+			logger.log(`[AI Service Call] 📝 Generated prompt - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_commit_analysis',
-				prompt,
+				payloadString,
 				null,
 				null,
 				logger
@@ -1423,15 +1360,22 @@ ${index + 1}. 文件: ${fileData.filePath}
 			logger.log(`[AI Service Call] 📊 Comparison data - Total changes: ${fileChanges.length}, Analyzed files: ${fileAnalysisData.length}`);
 
 			// 构建详细的比较提示词
-			const prompt = this.buildComprehensiveComparisonPrompt(fileChanges, fileAnalysisData);
+			const payload = {
+				fileAnalysisData: fileAnalysisData.map(f => ({
+					filePath: f.filePath,
+					type: f.type,
+					diffContent: f.diffContent.substring(0, 4000) + (f.diffContent.length > 4000 ? '...' : '')
+				}))
+			};
+			const payloadString = JSON.stringify(payload);
 
 			// 数据流调试：记录比较提示词信息
-			logger.log(`[AI Service Call] 📝 Generated comparison prompt - Length: ${prompt.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
+			logger.log(`[AI Service Call] 📝 Generated comparison payload - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_comparison_analysis',
-				prompt,
+				payloadString,
 				null,
 				null,
 				logger
@@ -1453,163 +1397,6 @@ ${index + 1}. 文件: ${fileData.filePath}
 			logger.logError(`[AI Service Call] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
-	}
-
-	/**
-	 * Build comprehensive analysis prompt for commit
-	 * @param commitDetails The commit details
-	 * @param fileAnalysisData Array of file analysis data
-	 * @returns Formatted prompt for AI analysis
-	 */
-	private buildComprehensiveAnalysisPrompt(
-		commitDetails: any,
-		fileAnalysisData: Array<{
-			filePath: string;
-			diffContent: string;
-			contentBefore: string | null;
-			contentAfter: string | null;
-			type: GitFileStatus;
-		}>
-	): string {
-		const stats = this.generateCommitStats(fileAnalysisData.map(f => ({
-			type: f.type,
-			newFilePath: f.filePath,
-			oldFilePath: f.filePath
-		} as GitFileChange)));
-
-		let prompt = `请对以下Git提交进行综合分析，提供一个整体性的总结报告。
-
-提交信息：
-- 提交哈希: ${commitDetails.hash}
-- 作者: ${commitDetails.author}
-- 提交消息: ${commitDetails.body || '无提交消息'}
-- ${stats}
-
-主要文件变更：
-`;
-
-		fileAnalysisData.forEach((fileData, index) => {
-			prompt += `
-${index + 1}. 文件: ${fileData.filePath}
-   变更类型: ${this.getFileChangeTypeDescription(fileData.type)}
-   
-   差异内容:
-   \`\`\`diff
-   ${fileData.diffContent.substring(0, 1000)}${fileData.diffContent.length > 1000 ? '...' : ''}
-   \`\`\`
-`;
-		});
-
-		prompt += `
-请提供一个综合性的分析报告，包括：
-1. 这次提交的主要目的和意图
-2. 涉及的核心功能或模块
-3. 变更的技术影响和业务价值
-4. 代码质量和架构方面的观察
-
-要求：
-- 使用中文回答
-- 重点关注整体性和关联性，而非单个文件的细节
-- 控制在150字以内
-- 使用HTML格式，包含适当的段落和强调标签`;
-
-		return prompt;
-	}
-
-	/**
-	 * Build comprehensive comparison prompt
-	 * @param fileChanges Array of file changes
-	 * @param fileAnalysisData Array of file analysis data
-	 * @returns Formatted prompt for AI analysis
-	 */
-	private buildComprehensiveComparisonPrompt(
-		fileChanges: ReadonlyArray<GitFileChange>,
-		fileAnalysisData: Array<{
-			filePath: string;
-			diffContent: string;
-			contentBefore: string | null;
-			contentAfter: string | null;
-			type: GitFileStatus;
-		}>
-	): string {
-		const stats = this.generateComparisonStats(fileChanges);
-
-		let prompt = `请对以下版本比较进行综合分析，提供一个整体性的总结报告。
-
-比较概览：
-- ${stats}
-
-主要文件变更：
-`;
-
-		fileAnalysisData.forEach((fileData, index) => {
-			prompt += `
-${index + 1}. 文件: ${fileData.filePath}
-   变更类型: ${this.getFileChangeTypeDescription(fileData.type)}
-   
-   差异内容:
-   \`\`\`diff
-   ${fileData.diffContent.substring(0, 1000)}${fileData.diffContent.length > 1000 ? '...' : ''}
-   \`\`\`
-`;
-		});
-
-		prompt += `
-请提供一个综合性的分析报告，包括：
-1. 两个版本之间的主要差异和演进方向
-2. 涉及的核心功能变化
-3. 整体架构或设计的改进
-4. 潜在的影响和风险评估
-
-要求：
-- 使用中文回答
-- 重点关注版本间的整体变化趋势，而非单个文件的细节
-- 控制在150字以内
-- 使用HTML格式，包含适当的段落和强调标签`;
-
-		return prompt;
-	}
-
-	/**
-	 * Get file change type description in Chinese
-	 * @param type File change type
-	 * @returns Chinese description
-	 */
-	private getFileChangeTypeDescription(type: GitFileStatus): string {
-		switch (type) {
-			case GitFileStatus.Added: return '新增';
-			case GitFileStatus.Modified: return '修改';
-			case GitFileStatus.Deleted: return '删除';
-			case GitFileStatus.Renamed: return '重命名';
-			case GitFileStatus.Untracked: return '未跟踪';
-			default: return '未知';
-		}
-	}
-
-	/**
-	 * Generate comparison statistics for AI analysis
-	 * @param fileChanges Array of file changes
-	 * @returns Formatted statistics string
-	 */
-	private generateComparisonStats(fileChanges: ReadonlyArray<GitFileChange>): string {
-		const stats = {
-			added: fileChanges.filter(f => f.type === GitFileStatus.Added).length,
-			modified: fileChanges.filter(f => f.type === GitFileStatus.Modified).length,
-			deleted: fileChanges.filter(f => f.type === GitFileStatus.Deleted).length,
-			renamed: fileChanges.filter(f => f.type === GitFileStatus.Renamed).length,
-			untracked: fileChanges.filter(f => f.type === GitFileStatus.Untracked).length
-		};
-
-		const totalChanges = stats.added + stats.modified + stats.deleted + stats.renamed + stats.untracked;
-
-		const parts = [];
-		if (stats.added > 0) parts.push(`${stats.added}个新增文件`);
-		if (stats.modified > 0) parts.push(`${stats.modified}个修改文件`);
-		if (stats.deleted > 0) parts.push(`${stats.deleted}个删除文件`);
-		if (stats.renamed > 0) parts.push(`${stats.renamed}个重命名文件`);
-		if (stats.untracked > 0) parts.push(`${stats.untracked}个未跟踪文件`);
-
-		return `本次比较共涉及 ${totalChanges} 个文件变更：${parts.join('，')}。`;
 	}
 
 	// Helper function to get raw diff (needed for AI service)
@@ -3415,15 +3202,17 @@ ${index + 1}. 文件: ${fileData.filePath}
 				logger.log(`[File History AI Service] 👥 Contributors: ${authors.length} unique (${authors.slice(0, 3).join(', ')}${authors.length > 3 ? '...' : ''})`);
 			}
 
-			// 构建文件历史分析提示
-			const prompt = this.buildFileHistoryAnalysisPrompt(filePath, commits);
-			logger.log(`[File History AI Service] 📝 Generated file history prompt - Length: ${prompt.length} chars`);
+			// 不在前端构建prompt，直接传递数据
+			const payload = {
+				filePath: filePath,
+				commits: commits
+			};
 
 			// 使用专门的文件历史分析服务
 			const serviceCallStartTime = Date.now();
 			const analysis = await analyzeFileHistory(
 				filePath,
-				prompt,
+				payload, // 发送payload对象
 				logger
 			);
 			const serviceCallEndTime = Date.now();
@@ -3449,62 +3238,6 @@ ${index + 1}. 文件: ${fileData.filePath}
 			logger.logError(`[File History AI Service] 🔍 Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
 		}
 		return null;
-	}
-
-	/**
-	 * Build analysis prompt for file history
-	 */
-	private buildFileHistoryAnalysisPrompt(filePath: string, commits: GitFileHistoryCommit[]): string {
-		const totalCommits = commits.length;
-		const totalAdditions = commits.reduce((sum, commit) => sum + (commit.additions || 0), 0);
-		const totalDeletions = commits.reduce((sum, commit) => sum + (commit.deletions || 0), 0);
-
-		// 获取主要贡献者
-		const authorStats: { [author: string]: number } = {};
-		commits.forEach(commit => {
-			authorStats[commit.author] = (authorStats[commit.author] || 0) + 1;
-		});
-		const topAuthors = Object.entries(authorStats)
-			.sort(([, a], [, b]) => b - a)
-			.slice(0, 3)
-			.map(([author, count]) => `${author} (${count}次提交)`);
-
-		let prompt = `请分析以下文件的历史演进情况：
-
-文件路径: ${filePath}
-总提交次数: ${totalCommits}
-总新增行数: ${totalAdditions}
-总删除行数: ${totalDeletions}
-主要贡献者: ${topAuthors.join(', ')}
-
-最近的提交历史：
-`;
-
-		// 添加最近的几次提交详情
-		commits.slice(0, Math.min(10, commits.length)).forEach((commit, index) => {
-			const date = new Date(commit.authorDate * 1000).toLocaleDateString();
-			const changeType = this.getFileChangeTypeDescription(commit.fileChange.type);
-			prompt += `
-${index + 1}. [${date}] ${commit.author}
-   提交: ${commit.message.split('\n')[0].substring(0, 100)}
-   变更: ${changeType} (+${commit.additions || 0}/-${commit.deletions || 0})
-`;
-		});
-
-		prompt += `
-请提供一个综合性的文件演进分析报告，包括：
-1. 文件演进总结（整体发展趋势和目的）
-2. 演进模式（开发活跃度、变更频率等）
-3. 关键变更点（重要的修改节点）
-4. 优化建议（基于历史模式的改进建议）
-
-要求：
-- 使用中文回答
-- 重点关注文件的演进趋势和开发模式
-- 控制在200字以内
-- 使用结构化的JSON格式回答，包含summary、evolutionPattern、keyChanges、recommendations四个字段`;
-
-		return prompt;
 	}
 
 	/**
@@ -3803,12 +3536,19 @@ ${index + 1}. [${date}] ${commit.author}
 		logger: Logger
 	): Promise<FileVersionComparisonAIAnalysis | null> {
 		try {
-			const prompt = this.buildFileVersionComparisonPrompt(filePath, fromHash, toHash, diffContent, contentBefore, contentAfter);
+			const payload = {
+				filePath,
+				fromHash,
+				toHash,
+				diffContent,
+				contentBefore,
+				contentAfter
+			};
 
 			// 使用专门的文件版本比较AI服务进行分析
 			const analysis = await analyzeFileVersionComparison(
 				filePath,
-				prompt,
+				payload,
 				logger
 			);
 
@@ -3820,77 +3560,6 @@ ${index + 1}. [${date}] ${commit.author}
 			logger.logError(`Failed to generate AI analysis for file version comparison: ${error}`);
 		}
 		return null;
-	}
-
-	/**
-	 * Build prompt for file version comparison AI analysis
-	 */
-	private buildFileVersionComparisonPrompt(
-		filePath: string,
-		fromHash: string,
-		toHash: string,
-		diffContent: string,
-		contentBefore: string | null,
-		contentAfter: string | null
-	): string {
-		const fileName = filePath.split('/').pop() || filePath;
-		const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
-
-		let prompt = `请对以下文件版本比较进行深度分析：
-
-文件信息：
-- 文件路径：${filePath}
-- 文件名：${fileName}
-- 文件类型：${fileExtension}
-- 源版本：${fromHash.substring(0, 8)}
-- 目标版本：${toHash.substring(0, 8)}
-
-Git Diff内容：
-\`\`\`diff
-${diffContent}
-\`\`\`
-`;
-
-		if (contentBefore && contentAfter) {
-			prompt += `
-版本前内容预览（前200字符）：
-\`\`\`
-${contentBefore.substring(0, 200)}${contentBefore.length > 200 ? '...' : ''}
-\`\`\`
-
-版本后内容预览（前200字符）：
-\`\`\`
-${contentAfter.substring(0, 200)}${contentAfter.length > 200 ? '...' : ''}
-\`\`\`
-`;
-		}
-
-		prompt += `
-请按以下JSON格式提供分析结果：
-
-{
-  "summary": "这次文件变更的简要总结（不超过100字）",
-  "changeType": "变更类型描述（如：功能增强、bug修复、重构等）",
-  "impactAnalysis": "变更影响分析（对系统、用户、性能等方面的影响）",
-  "keyModifications": [
-    "第一个关键修改点",
-    "第二个关键修改点",
-    "第三个关键修改点"
-  ],
-  "recommendations": [
-    "第一个建议或注意事项",
-    "第二个建议或注意事项"
-  ]
-}
-
-要求：
-1. 严格返回有效的JSON格式，不要添加其他内容
-2. 所有字段都用中文填写
-3. keyModifications和recommendations数组每项不超过50字
-4. 分析要专业且有价值
-5. 基于实际的代码变更提供见解`;
-
-		return prompt;
 	}
 
 	/**
