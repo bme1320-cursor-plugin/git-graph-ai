@@ -148,10 +148,22 @@ def handle_comprehensive_analysis(data):
         payload_str = data.get('file_diff', '{}')
         payload = json.loads(payload_str)
 
+        # 🚀 新增：获取当前模型名称以便优化 prompt
+        current_model_name = 'deepseek-v3'  # 默认值
+        if model_manager.current_provider:
+            provider_name = model_manager.current_provider.get_provider_name()
+            if 'OpenAI' in provider_name and 'gpt-4.1' in provider_name.lower():
+                current_model_name = 'gpt-4.1-mini' if 'mini' in provider_name.lower() else 'gpt-4.1'
+            elif 'Deepseek' in provider_name:
+                if 'deepseek-r1' in provider_name.lower():
+                    current_model_name = 'deepseek-r1'
+                else:
+                    current_model_name = 'deepseek-v3'
+
         prompt_builders = {
-            'comprehensive_commit_analysis': prompts.build_comprehensive_commit_analysis_prompt,
-            'comprehensive_uncommitted_analysis': prompts.build_comprehensive_uncommitted_analysis_prompt,
-            'comprehensive_comparison_analysis': prompts.build_comprehensive_comparison_prompt
+            'comprehensive_commit_analysis': lambda payload: prompts.build_comprehensive_commit_analysis_prompt(payload, current_model_name),
+            'comprehensive_uncommitted_analysis': lambda payload: prompts.build_comprehensive_uncommitted_analysis_prompt(payload, current_model_name),
+            'comprehensive_comparison_analysis': lambda payload: prompts.build_comprehensive_comparison_prompt(payload, current_model_name)
         }
 
         builder = prompt_builders.get(analysis_context_marker)
@@ -160,6 +172,8 @@ def handle_comprehensive_analysis(data):
             return jsonify({"error": f"Invalid comprehensive analysis type: {analysis_context_marker}"}), 400
             
         prompt = builder(payload)
+        
+        print(f"🔧 Using model-optimized prompt for {current_model_name}, context: {analysis_context_marker}")
         
         # 使用模型管理器进行分析
         ai_summary = model_manager.chat_completion(

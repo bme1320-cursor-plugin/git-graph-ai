@@ -1,5 +1,6 @@
 # ai_service/prompt_config.py
 from datetime import datetime
+from token_manager import TokenManager
 
 def get_file_change_type_description(type_char):
     """根据文件变更类型字符返回中文描述"""
@@ -61,32 +62,53 @@ def build_analyze_diff_prompt(file_path, file_extension, file_name, file_diff):
             4. 避免使用"这个文件"等指代词
             """
 
-def build_comprehensive_commit_analysis_prompt(payload):
-    """构建Git提交的综合分析提示"""
+def build_comprehensive_commit_analysis_prompt(payload, model_name='deepseek-v3'):
+    """构建Git提交的综合分析提示，支持 token 优化"""
     commit_details = payload.get('commitDetails', {})
     file_analysis_data = payload.get('fileAnalysisData', [])
-    stats = generate_stats_from_payload(file_analysis_data, is_comparison=False)
+    
+    # 🚀 使用 token 管理器优化文件数据（只进行内容截断，不限制文件数量）
+    token_manager = TokenManager(model_name)
+    optimized_files = token_manager.optimize_file_analysis_data(file_analysis_data)
+    
+    # 记录优化信息
+    if len(optimized_files) < len(file_analysis_data):
+        print(f"🔧 Token optimization: {len(file_analysis_data)} -> {len(optimized_files)} files for {model_name}")
+    
+    stats = generate_stats_from_payload(optimized_files, is_comparison=False)
 
     prompt = f"""请对以下Git提交进行综合分析，提供一个整体性的总结报告。
 
 提交信息：
-- 提交哈希: {commit_details.get('hash')}
-- 作者: {commit_details.get('author')}
-- 提交消息: {commit_details.get('body') or '无提交消息'}
+- 提交哈希: {commit_details.get('hash', 'N/A')[:8]}...
+- 作者: {commit_details.get('author', 'N/A')}
+- 提交消息: {_truncate_text(commit_details.get('body', '无提交消息'), 100)}
 - {stats}
 
 主要文件变更：
 """
-    for index, file_data in enumerate(file_analysis_data):
+    for index, file_data in enumerate(optimized_files):
+        diff_content = file_data.get('diffContent', '')
+        # 🚀 根据模型能力调整diff压缩级别
+        if model_name in ['gpt-4.1', 'gpt-4.1-mini']:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=15)  # 更多行数
+        else:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=8)   # 标准限制
+        
         prompt += f"""
 {index + 1}. 文件: {file_data.get('filePath')}
    变更类型: {get_file_change_type_description(file_data.get('type'))}
    
    差异内容:
    ```diff
-   {file_data.get('diffContent')}
+   {compressed_diff}
    ```
 """
+    
+    # 如果有文件被优化压缩，添加说明
+    if len(optimized_files) < len(file_analysis_data):
+        prompt += f"\n[注：为控制token使用，已优化 {len(file_analysis_data) - len(optimized_files)} 个文件的内容]\n"
+
     prompt += """
 请提供一个综合性的分析报告，包括：
 1. 这次提交的主要目的和意图
@@ -101,10 +123,15 @@ def build_comprehensive_commit_analysis_prompt(payload):
 - 使用HTML格式，包含适当的段落和强调标签"""
     return prompt
 
-def build_comprehensive_uncommitted_analysis_prompt(payload):
-    """构建未提交变更的综合分析提示"""
+def build_comprehensive_uncommitted_analysis_prompt(payload, model_name='deepseek-v3'):
+    """构建未提交变更的综合分析提示，支持 token 优化"""
     file_analysis_data = payload.get('fileAnalysisData', [])
-    stats = generate_stats_from_payload(file_analysis_data, is_comparison=True)
+    
+    # 🚀 使用 token 管理器优化文件数据（只进行内容截断，不限制文件数量）
+    token_manager = TokenManager(model_name)
+    optimized_files = token_manager.optimize_file_analysis_data(file_analysis_data)
+    
+    stats = generate_stats_from_payload(optimized_files, is_comparison=True)
 
     prompt = f"""请对以下未提交的代码变更进行综合分析，提供一个整体性的总结报告。
 
@@ -114,16 +141,27 @@ def build_comprehensive_uncommitted_analysis_prompt(payload):
 
 主要文件变更：
 """
-    for index, file_data in enumerate(file_analysis_data):
+    for index, file_data in enumerate(optimized_files):
+        diff_content = file_data.get('diffContent', '')
+        # 🚀 根据模型能力调整diff压缩级别
+        if model_name in ['gpt-4.1', 'gpt-4.1-mini']:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=12)  # 更多行数
+        else:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=6)   # 标准限制
+        
         prompt += f"""
 {index + 1}. 文件: {file_data.get('filePath')}
    变更类型: {get_file_change_type_description(file_data.get('type'))}
    
    差异内容:
    ```diff
-   {file_data.get('diffContent')}
+   {compressed_diff}
    ```
 """
+    
+    if len(optimized_files) < len(file_analysis_data):
+        prompt += f"\n[注：为控制token使用，已优化 {len(file_analysis_data) - len(optimized_files)} 个文件的内容]\n"
+
     prompt += """
 请提供一个综合性的分析报告，包括：
 1. 未提交变更的主要目的和意图
@@ -139,10 +177,15 @@ def build_comprehensive_uncommitted_analysis_prompt(payload):
 - 使用HTML格式，包含适当的段落和强调标签"""
     return prompt
 
-def build_comprehensive_comparison_prompt(payload):
-    """构建版本比较的综合分析提示"""
+def build_comprehensive_comparison_prompt(payload, model_name='deepseek-v3'):
+    """构建版本比较的综合分析提示，支持 token 优化"""
     file_analysis_data = payload.get('fileAnalysisData', [])
-    stats = generate_stats_from_payload(file_analysis_data, is_comparison=True)
+    
+    # 🚀 使用 token 管理器优化文件数据（只进行内容截断，不限制文件数量）
+    token_manager = TokenManager(model_name)
+    optimized_files = token_manager.optimize_file_analysis_data(file_analysis_data)
+    
+    stats = generate_stats_from_payload(optimized_files, is_comparison=True)
 
     prompt = f"""请对以下版本比较进行综合分析，提供一个整体性的总结报告。
 
@@ -151,16 +194,27 @@ def build_comprehensive_comparison_prompt(payload):
 
 主要文件变更：
 """
-    for index, file_data in enumerate(file_analysis_data):
+    for index, file_data in enumerate(optimized_files):
+        diff_content = file_data.get('diffContent', '')
+        # 🚀 根据模型能力调整diff压缩级别
+        if model_name in ['gpt-4.1', 'gpt-4.1-mini']:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=10)  # 更多行数
+        else:
+            compressed_diff = _compress_diff_for_analysis(diff_content, max_lines=6)   # 标准限制
+        
         prompt += f"""
 {index + 1}. 文件: {file_data.get('filePath')}
    变更类型: {get_file_change_type_description(file_data.get('type'))}
    
    差异内容:
    ```diff
-   {file_data.get('diffContent')}
+   {compressed_diff}
    ```
 """
+    
+    if len(optimized_files) < len(file_analysis_data):
+        prompt += f"\n[注：为控制token使用，已优化 {len(file_analysis_data) - len(optimized_files)} 个文件的内容]\n"
+
     prompt += """
 请提供一个综合性的分析报告，包括：
 1. 两个版本之间的主要差异和演进方向
@@ -174,6 +228,52 @@ def build_comprehensive_comparison_prompt(payload):
 - 控制在150字以内
 - 使用HTML格式，包含适当的段落和强调标签"""
     return prompt
+
+def _compress_diff_for_analysis(diff_content, max_lines=8):
+    """
+    为AI分析压缩diff内容
+    """
+    if not diff_content:
+        return diff_content
+    
+    lines = diff_content.split('\n')
+    
+    # 如果行数较少，直接返回
+    if len(lines) <= max_lines:
+        return diff_content
+    
+    # 提取重要行
+    important_lines = []
+    context_lines = []
+    
+    for line in lines:
+        if any(line.startswith(prefix) for prefix in ['+++', '---', '@@', '+', '-']):
+            important_lines.append(line)
+        else:
+            context_lines.append(line)
+    
+    # 优先保留重要行
+    result_lines = important_lines[:max_lines-1]
+    
+    # 如果还有空间，添加一些上下文
+    remaining_space = max_lines - len(result_lines)
+    if remaining_space > 0 and context_lines:
+        result_lines.extend(context_lines[:remaining_space])
+    
+    # 如果内容被截断，添加说明
+    if len(result_lines) < len(lines):
+        result_lines.append(f"...[已压缩，原始内容共{len(lines)}行]")
+    
+    return '\n'.join(result_lines)
+
+def _truncate_text(text, max_length=100):
+    """
+    截断文本到指定长度
+    """
+    if not text or len(text) <= max_length:
+        return text
+    
+    return text[:max_length] + "..."
 
 def build_file_history_analysis_prompt(payload):
     """构建文件历史分析的提示"""
