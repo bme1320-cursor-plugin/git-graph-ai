@@ -33,6 +33,17 @@ const DEFAULT_CACHE_CONFIG: AICacheConfig = {
 };
 
 /**
+ * 生成缓存键参数接口
+ */
+export interface CacheKeyParams {
+    analysisType: string;
+    commitHash?: string;
+    compareWithHash?: string;
+    filePath?: string;
+    additionalContext?: Record<string, string>;
+}
+
+/**
  * AI分析缓存管理器
  * 提供内存和磁盘两级缓存，支持LRU淘汰和过期清理
  */
@@ -59,13 +70,39 @@ export class AiCacheManager {
 
     /**
      * 生成缓存键
-     * @param content 要缓存的内容（通常是diff内容）
-     * @param type 分析类型
+     * @param params 缓存键参数
      * @returns 缓存键
      */
-    public generateCacheKey(content: string, type: string = 'default'): string {
+    public generateCacheKey(params: CacheKeyParams): string {
+    	// 构建确定性的键组件
+    	const keyComponents: string[] = [
+    		`type:${params.analysisType}`
+    	];
+
+    	if (params.commitHash) {
+    		keyComponents.push(`commit:${params.commitHash}`);
+    	}
+
+    	if (params.compareWithHash) {
+    		keyComponents.push(`compare:${params.compareWithHash}`);
+    	}
+
+    	if (params.filePath) {
+    		keyComponents.push(`file:${params.filePath}`);
+    	}
+
+    	// 添加额外的上下文参数（按键排序确保一致性）
+    	if (params.additionalContext) {
+    		const sortedKeys = Object.keys(params.additionalContext).sort();
+    		for (const key of sortedKeys) {
+    			keyComponents.push(`${key}:${params.additionalContext[key]}`);
+    		}
+    	}
+
+    	// 生成最终的缓存键
+    	const keyString = keyComponents.join('|');
     	const hash = crypto.createHash('sha256');
-    	hash.update(`${type}:${content}`);
+    	hash.update(keyString);
     	return hash.digest('hex');
     }
 

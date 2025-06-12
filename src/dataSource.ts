@@ -938,13 +938,26 @@ export class DataSource extends Disposable {
 			// 数据流调试：记录提示词信息
 			logger.log(`[AI Service Call] 📝 Generated uncommitted payload - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
+			// 构建结构化缓存键参数 (对于uncommitted changes，我们使用特殊的标识)
+			const cacheKeyParams = {
+				analysisType: 'comprehensive_uncommitted_analysis',
+				commitHash: 'UNCOMMITTED',
+				additionalContext: {
+					fileCount: fileAnalysisData.length.toString(),
+					timestamp: Math.floor(Date.now() / 60000).toString() // 分钟级别的时间戳，避免频繁变化
+				}
+			};
+
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_uncommitted_analysis',
 				payloadString,
 				null,
 				null,
-				logger
+				cacheKeyParams, // 新的结构化缓存键参数
+				logger,
+				30000, // 30秒超时
+				0 // 初始重试计数
 			);
 
 			if (analysis) {
@@ -1122,7 +1135,7 @@ export class DataSource extends Disposable {
 			}
 
 			// 生成 AI 分析
-			const analysis = await this.generateComprehensiveComparisonAnalysis(fileChanges, fileAnalysisData, this.logger);
+			const analysis = await this.generateComprehensiveComparisonAnalysis(fileChanges, fileAnalysisData, this.logger, fromHash, toHash);
 
 			if (analysis) {
 				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
@@ -1309,13 +1322,26 @@ export class DataSource extends Disposable {
 			// 数据流调试：记录提示词信息
 			logger.log(`[AI Service Call] 📝 Generated prompt - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
+			// 构建结构化缓存键参数
+			const cacheKeyParams = {
+				analysisType: 'comprehensive_commit_analysis',
+				commitHash: commitDetails.hash,
+				additionalContext: {
+					fileCount: fileAnalysisData.length.toString(),
+					author: commitDetails.author || 'unknown'
+				}
+			};
+
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_commit_analysis',
 				payloadString,
 				null,
 				null,
-				logger
+				cacheKeyParams, // 新的结构化缓存键参数
+				logger,
+				30000, // 30秒超时
+				0 // 初始重试计数
 			);
 
 			if (analysis) {
@@ -1352,7 +1378,9 @@ export class DataSource extends Disposable {
 			contentAfter: string | null;
 			type: GitFileStatus;
 		}>,
-		logger: Logger
+		logger: Logger,
+		fromHash: string,
+		toHash: string
 	): Promise<{ summary: string } | null> {
 		try {
 			// 数据流调试：记录AI比较服务调用详情
@@ -1372,13 +1400,27 @@ export class DataSource extends Disposable {
 			// 数据流调试：记录比较提示词信息
 			logger.log(`[AI Service Call] 📝 Generated comparison payload - Length: ${payloadString.length} chars, Contains files: ${fileAnalysisData.map(f => f.filePath.split('/').pop()).join(', ')}`);
 
+			// 构建结构化缓存键参数 (比较分析需要包含两个commit hash)
+			const cacheKeyParams = {
+				analysisType: 'comprehensive_comparison_analysis',
+				commitHash: fromHash,
+				compareWithHash: toHash === '' ? 'WORKING_TREE' : toHash, // 空字符串表示工作树
+				additionalContext: {
+					fileCount: fileAnalysisData.length.toString(),
+					totalChanges: fileChanges.length.toString()
+				}
+			};
+
 			// 使用真实的AI分析服务进行综合分析
 			const analysis = await analyzeDiff(
 				'comprehensive_comparison_analysis',
 				payloadString,
 				null,
 				null,
-				logger
+				cacheKeyParams, // 新的结构化缓存键参数
+				logger,
+				30000, // 30秒超时
+				0 // 初始重试计数
 			);
 
 			if (analysis) {

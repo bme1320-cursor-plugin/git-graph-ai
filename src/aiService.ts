@@ -1,6 +1,6 @@
 import * as http from 'http';
 import { Logger } from './logger';
-import { AiCacheManager } from './aiCache';
+import { AiCacheManager, CacheKeyParams } from './aiCache';
 
 // Define the structure for the AI analysis result with enhanced error handling
 export interface AIAnalysis {
@@ -71,6 +71,7 @@ export async function clearCache(): Promise<void> {
  * @param fileDiff The raw diff content.
  * @param contentBefore Content before changes (optional, might be useful for AI).
  * @param contentAfter Content after changes (optional, might be useful for AI).
+ * @param cacheKeyParams Cache key parameters for efficient caching (required).
  * @param logger Optional logger instance.
  * @param timeout Request timeout in milliseconds (default: 30000).
  * @param retryCount Current retry attempt (for internal use).
@@ -81,6 +82,7 @@ export function analyzeDiff(
 	fileDiff: string,
 	contentBefore: string | null,
 	contentAfter: string | null,
+	cacheKeyParams: CacheKeyParams,
 	logger?: Logger,
 	timeout: number = DEFAULT_TIMEOUT,
 	retryCount: number = 0
@@ -96,9 +98,16 @@ export function analyzeDiff(
 			return;
 		}
 
+		// 验证缓存键参数
+		if (!cacheKeyParams || !cacheKeyParams.analysisType) {
+			logger?.logError(`[AI Service] Missing required cache key parameters for: ${analysisContext}`);
+			resolve(null);
+			return;
+		}
+
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(fileDiff, analysisContext);
+			const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 			logger?.log(`[AI Service] Checking cache with key: ${cacheKey.substring(0, 16)}...`);
 
 			const cachedResult = await cacheManager.get(cacheKey);
@@ -157,7 +166,7 @@ export function analyzeDiff(
 
 							// 缓存结果
 							if (cacheManager) {
-								const cacheKey = cacheManager.generateCacheKey(fileDiff, analysisContext);
+								const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 								await cacheManager.set(cacheKey, analysis);
 								logger?.log(`[AI Service] Result cached for: ${analysisContext}`);
 							}
@@ -170,7 +179,7 @@ export function analyzeDiff(
 							if (retryCount < MAX_RETRIES) {
 								logger?.log(`[AI Service] Retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 								setTimeout(() => {
-									analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+									analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, cacheKeyParams, logger, timeout, retryCount + 1)
 										.then(resolve);
 								}, 1000 * (retryCount + 1)); // Exponential backoff
 							} else {
@@ -184,7 +193,7 @@ export function analyzeDiff(
 						if (retryCount < MAX_RETRIES) {
 							logger?.log(`[AI Service] Retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 							setTimeout(() => {
-								analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+								analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, cacheKeyParams, logger, timeout, retryCount + 1)
 									.then(resolve);
 							}, 1000 * (retryCount + 1));
 						} else {
@@ -198,7 +207,7 @@ export function analyzeDiff(
 					if (res.statusCode && res.statusCode >= 500 && retryCount < MAX_RETRIES) {
 						logger?.log(`[AI Service] Server error, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 						setTimeout(() => {
-							analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+							analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, cacheKeyParams, logger, timeout, retryCount + 1)
 								.then(resolve);
 						}, 1000 * (retryCount + 1));
 					} else {
@@ -215,7 +224,7 @@ export function analyzeDiff(
 			if (retryCount < MAX_RETRIES) {
 				logger?.log(`[AI Service] Network error, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 				setTimeout(() => {
-					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, cacheKeyParams, logger, timeout, retryCount + 1)
 						.then(resolve);
 				}, 1000 * (retryCount + 1));
 			} else {
@@ -231,7 +240,7 @@ export function analyzeDiff(
 			if (retryCount < MAX_RETRIES) {
 				logger?.log(`[AI Service] Timeout, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 				setTimeout(() => {
-					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout * 1.5, retryCount + 1) // Increase timeout
+					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, cacheKeyParams, logger, timeout * 1.5, retryCount + 1) // Increase timeout
 						.then(resolve);
 				}, 1000 * (retryCount + 1));
 			} else {
@@ -263,7 +272,7 @@ export async function analyzeDiffBatch(
 
 	const results = await Promise.all(
 		analyses.map(async ({ filePath, fileDiff, contentBefore, contentAfter }) => {
-			const analysis = await analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger);
+			const analysis = await analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, { analysisType: 'comprehensive_commit_analysis' }, logger);
 			return { filePath, analysis };
 		})
 	);
@@ -310,13 +319,13 @@ export function checkAIServiceAvailability(logger?: Logger): Promise<boolean> {
 /**
  * Analyze file history using the dedicated endpoint
  * @param filePath The path of the file
- * @param payload The analysis payload
+ * @param payload The analysis payload (should contain commits data)
  * @param logger Optional logger instance
  * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileHistory(
 	filePath: string,
-	payload: object,
+	payload: any,
 	logger?: Logger
 ): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
@@ -328,9 +337,26 @@ export function analyzeFileHistory(
 			return;
 		}
 
+		// 构建结构化缓存键参数
+		const cacheKeyParams: CacheKeyParams = {
+			analysisType: 'file_history_analysis',
+			filePath: filePath,
+			additionalContext: {
+				commitCount: payload.commits?.length?.toString() || '0'
+			}
+		};
+
+		// 如果有commits，使用第一个和最后一个commit作为范围标识
+		if (payload.commits && Array.isArray(payload.commits) && payload.commits.length > 0) {
+			cacheKeyParams.commitHash = payload.commits[0]?.hash || 'unknown';
+			if (payload.commits.length > 1) {
+				cacheKeyParams.compareWithHash = payload.commits[payload.commits.length - 1]?.hash || 'unknown';
+			}
+		}
+
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(payloadString, `file_history:${filePath}`);
+			const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 			const cachedResult = await cacheManager.get(cacheKey);
 			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file history: ${filePath}`);
@@ -376,7 +402,7 @@ export function analyzeFileHistory(
 
 							// 缓存结果
 							if (cacheManager) {
-								const cacheKey = cacheManager.generateCacheKey(payloadString, `file_history:${filePath}`);
+								const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 								await cacheManager.set(cacheKey, analysis);
 								logger?.log(`[AI Service] Cached file history result for: ${filePath}`);
 							}
@@ -420,13 +446,13 @@ export function analyzeFileHistory(
 /**
  * Analyze file version comparison using the dedicated endpoint
  * @param filePath The path of the file
- * @param payload The analysis payload
+ * @param payload The analysis payload (should contain fromHash, toHash, and diff data)
  * @param logger Optional logger instance
  * @returns A Promise resolving to the analysis result or null if analysis fails
  */
 export function analyzeFileVersionComparison(
 	filePath: string,
-	payload: object,
+	payload: any,
 	logger?: Logger
 ): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
@@ -438,9 +464,22 @@ export function analyzeFileVersionComparison(
 			return;
 		}
 
+		// 构建结构化缓存键参数
+		const cacheKeyParams: CacheKeyParams = {
+			analysisType: 'file_version_comparison',
+			filePath: filePath,
+			commitHash: payload.fromHash || 'unknown',
+			compareWithHash: payload.toHash || 'unknown',
+			additionalContext: {
+				hasContentBefore: payload.contentBefore ? 'true' : 'false',
+				hasContentAfter: payload.contentAfter ? 'true' : 'false',
+				hasDiff: payload.diffContent ? 'true' : 'false'
+			}
+		};
+
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(payloadString, `file_version_comparison:${filePath}`);
+			const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 			const cachedResult = await cacheManager.get(cacheKey);
 			if (cachedResult && cachedResult.summary) {
 				logger?.log(`[AI Service] Cache hit for file version comparison: ${filePath}`);
@@ -483,7 +522,7 @@ export function analyzeFileVersionComparison(
 
 						// 缓存结果
 						if (cacheManager) {
-							const cacheKey = cacheManager.generateCacheKey(payloadString, `file_version_comparison:${filePath}`);
+							const cacheKey = cacheManager.generateCacheKey(cacheKeyParams);
 							await cacheManager.set(cacheKey, analysis);
 						}
 
