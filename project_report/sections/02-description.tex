@@ -1,0 +1,152 @@
+The extension is built upon a robust, decoupled three-tier architecture that separates concerns between the user interface, the core business logic, and the AI processing. This design ensures modularity, scalability, and maintainability.
+
+\subsection{Software Architecture}
+The system is composed of three primary components that work in concert: the Webview Frontend, the Cursor Extension Backend, and a Python-based AI Service. The interaction between these components is illustrated in Figure \ref{fig:architecture}.
+
+\begin{figure}[h!]
+    \centering
+    \begin{tikzpicture}[
+        node distance=2cm and 2.5cm,
+        block/.style={
+            rectangle, 
+            draw, 
+            text width=3.5cm, 
+            minimum height=2cm, 
+            text centered, 
+            rounded corners, 
+            fill=blue!10,
+            drop shadow
+        },
+        cloud/.style={
+            ellipse,
+            draw,
+            minimum height=1.5cm,
+            fill=gray!15,
+            drop shadow
+        },
+        line/.style={
+            draw, 
+            -{Stealth[length=3mm]},
+            font=\footnotesize
+        }
+    ]
+    % Nodes
+    \node[block] (frontend) {\textbf{Webview Frontend} \\ (Cursor UI)};
+    \node[block, right=of frontend] (backend) {\textbf{Extension Backend} \\ (Node.js)};
+    \node[block, right=of backend] (aiservice) {\textbf{Python AI Service}};
+    \node[cloud, above=of aiservice] (llm_apis) {LLM APIs};
+    \node[cloud, below=of backend] (git) {Git CLI};
+
+    % Arrows
+    \path[line] (frontend) edge[bend left] node[above] {User Action / Request} (backend);
+    \path[line] (backend) edge[bend left] node[below] {UI Update / AI Result} (frontend);
+    \path[line] (backend) edge node[above] {HTTP Request} node[below] {(Code Diffs)} (aiservice);
+    \path[line] (aiservice) edge[bend left] node[above] {HTTP Response} node[below] {(JSON Analysis)} (backend);
+    \path[line] (backend) edge node[right, midway] {Executes} (git);
+    \path[line] (aiservice) edge node[right, midway] {API Call} (llm_apis);
+    \end{tikzpicture}
+    \caption{The three-tier architecture of the IntelliDiff extension, showing the flow of requests and data between the Webview UI, the Cursor Extension Backend, and the Python AI Service.}
+    \label{fig:architecture}
+\end{figure}
+
+\begin{enumerate}
+    \item \textbf{Webview Frontend}: This is the user-facing component, rendered inside a Cursor Webview panel. It is responsible for all visualization, including the Git graph itself, commit details, and the display of AI-generated analysis. It is built with standard web technologies (TypeScript, HTML, CSS) and communicates with the backend via a message-passing API provided by Cursor. When a user interacts with the graph (e.g., clicks on a commit), the frontend sends a request message to the backend.
+
+    \item \textbf{Cursor Extension Backend}: Running in a Node.js environment, this is the core of the extension. It acts as the central orchestrator, handling requests from the frontend, managing application state, and interfacing with external services. Its key responsibilities include:
+    \begin{itemize}
+        \item Executing native Git commands to fetch repository data (logs, diffs, etc.).
+        \item Implementing the business logic for performance optimizations, such as asynchronous processing and caching.
+        \item Communicating with the Python AI Service via HTTP requests, sending it data to be analyzed.
+        \item Pushing data and updates (including asynchronous AI results) back to the frontend.
+    \end{itemize}
+
+    \item \textbf{Python AI Service}: This is a lightweight, local web server dedicated to handling all interactions with Large Language Models (supporting both OpenAI and DeepSeek APIs). Decoupling the AI logic into a separate service provides several advantages: it allows for the use of Python's mature data science and AI ecosystem, it isolates API keys and prompts from the main extension code, and it could potentially be deployed remotely in the future. It receives diff content and other metadata from the extension backend, constructs detailed prompts, and returns structured analysis results.
+\end{enumerate}
+
+\subsection{Core AI Features and Optimizations}
+The project's main innovation lies in its deep integration of AI analysis and the performance optimizations that make it practical for daily use.
+
+\subsubsection{Multi-faceted AI Analysis}
+Based on the context, the extension can perform several types of AI analysis by sending structured prompts to the AI service. The prompts are carefully engineered to elicit concise and relevant information:
+\begin{itemize}
+    \item \textbf{Comprehensive Commit Analysis}: For a single commit, the AI is asked to generate a holistic summary covering the main purpose, affected modules, technical and business value, and overall code quality.
+    \item \textbf{Version Comparison Analysis}: When comparing two commits, the AI focuses on summarizing the evolutionary changes, such as new features, refactoring efforts, and architectural shifts.
+    \item \textbf{Dedicated File History View}: In a particularly powerful feature, the extension can open a detailed history for a single file in a new, dedicated tab. This view offers two modes of AI analysis:
+    \begin{itemize}
+        \item \textit{Evolution Analysis}: The AI analyzes the file's entire commit history to produce a report on its development patterns, identify key historical changes, and provide optimization recommendations.
+        \item \textit{Targeted Version Comparison}: Within the history view, users can select any two versions of the file and receive a specific, AI-powered comparison of just those two points in time.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Optimization 1: Asynchronous Processing}
+To avoid blocking the UI while waiting for (potentially slow) AI responses, the extension employs an asynchronous, non-blocking workflow.
+\begin{enumerate}
+    \item A user action triggers a request to the backend.
+    \item The backend \textit{immediately} returns the basic, non-AI-dependent data (e.g., commit metadata, file list). The frontend renders this information instantly, showing a loading indicator for the AI section.
+    \item In parallel, the backend spawns an asynchronous task to prepare data and call the AI service.
+    \item Once the AI analysis is complete, the backend pushes the result to the frontend using a dedicated message, which then dynamically updates the UI.
+\end{enumerate}
+This ``instant-feedback, progressive-enhancement'' model is critical for maintaining a responsive user experience.
+
+\subsubsection{Optimization 2: Two-Tier Intelligent Caching}
+To minimize API costs and accelerate repeated analyses, the extension uses a sophisticated two-tier caching system.
+\begin{itemize}
+    \item \textbf{L1 Memory Cache}: A simple `Map` object for ultra-fast (sub-millisecond) access to results within the current session. It is managed by a Least Recently Used (LRU) eviction policy.
+    \item \textbf{L2 Disk Cache}: A JSON file on disk that persists results across sessions. When the extension starts, it pre-loads a portion of the disk cache into memory for faster initial access.
+    \item \textbf{Intelligent Cache Key}: The cache key is not the commit hash. Instead, it is a `sha256` hash of the code diff content itself. This is a crucial optimization: if the same change is present in two different commits (e.g., from a cherry-pick or rebase), the system recognizes it and reuses the cached result, saving a redundant API call.
+\end{itemize}
+
+\subsection{Implementation Highlights}
+Below are two code snippets from the TypeScript backend that illustrate the implementation of the core optimization strategies.
+
+\subsubsection{Asynchronous AI Analysis Workflow}
+The following snippet from `dataSource.ts` shows how a request for commit details is handled. It immediately returns the basic details while launching the AI analysis in the background.
+
+\begin{lstlisting}[language=TypeScript, caption={Simplified from src/dataSource.ts}, label={lst:async}]
+// Simplified from src/dataSource.ts
+public async getCommitDetails(repo: string, commitHash: string) {
+    // 1. Fetch basic details using Git commands
+    const commitDetails = await this.getCommitDetailsBase(repo, commitHash);
+    
+    // 2. Immediately return the basic details for instant UI rendering
+    const result = { commitDetails: commitDetails, error: null };
+
+    // 3. Trigger the asynchronous AI analysis in the background.
+    // This does not block the return of the function.
+    if (aiConfig.enabled) {
+        this.performAsyncCommitAnalysis(
+            repo, commitHash, commitDetails, ...
+        ).catch(error => {
+            this.logger.logError(`Async AI analysis failed: ${error}`);
+        });
+    }
+
+    return result;
+}
+
+// Later, inside performAsyncCommitAnalysis...
+const aiAnalysis = await this.generateComprehensiveCommitAnalysis(...);
+// Push the result to the UI via a registered callback
+this.sendAIAnalysisUpdate(commitHash, null, aiAnalysis);
+\end{lstlisting}
+
+\subsubsection{Intelligent Cache Key Generation}
+This snippet from `aiCache.ts` demonstrates the smart cache key generation, which is fundamental to the efficiency of the caching system.
+
+\begin{lstlisting}[language=TypeScript, caption={From src/aiCache.ts}, label={lst:cachekey}]
+// From src/aiCache.ts
+public generateCacheKey(content: string, type: string = 'default'): string {
+    const hash = crypto.createHash('sha256');
+    // The key is based on the analysis type and the actual content (diff)
+    hash.update(`${type}:${content}`);
+    return hash.digest('hex');
+}
+\end{lstlisting}
+
+\subsubsection{Advanced Git Command Optimization}
+A significant performance enhancement was achieved in the File History feature by optimizing Git command execution. The initial approach required multiple (`1 + 3N`) calls to Git for `N` commits. This was consolidated into a single, highly-efficient command that fetches all necessary data in one pass, dramatically reducing process overhead and improving load times from seconds to milliseconds.
+
+\begin{lstlisting}[language=bash, caption={Optimized single-pass Git command for file history}, label={lst:git-optim}]
+# Fetches log, author, date, message, and file stats in one command
+git log --follow --format=%H|%P|%an|%at|%s --numstat --max-count=50 -- filePath
+\end{lstlisting} 

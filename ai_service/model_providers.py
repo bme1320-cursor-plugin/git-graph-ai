@@ -3,6 +3,8 @@
 import os
 import json
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from abc import ABC, abstractmethod
 from openai import OpenAI, OpenAIError
 
@@ -91,6 +93,15 @@ class DeepseekProvider(ModelProvider):
         self.model = self.config["model"]
         self.api_key = self.config["api_key"]
         
+        # 为提高网络请求的稳定性，增加会话和重试机制
+        self.session = requests.Session()
+        # 设置重试策略：总共重试3次，对5xx错误码进行重试，并设置回退避让因子
+        retries = Retry(total=3,
+                        backoff_factor=0.3,
+                        status_forcelist=[500, 502, 503, 504])
+        # 将重试策略应用到所有https请求
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
+
         print(f"Deepseek provider initialized with model: {self.model}")
     
     def chat_completion(self, messages, max_tokens=100, temperature=0.3):
@@ -110,7 +121,8 @@ class DeepseekProvider(ModelProvider):
         }
         
         try:
-            response = requests.post(
+            # 使用带有重试机制的session进行请求
+            response = self.session.post(
                 self.base_url,
                 headers=headers,
                 json=payload,
