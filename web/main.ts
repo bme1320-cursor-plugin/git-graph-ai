@@ -2676,7 +2676,10 @@ class GitGraphView {
 		const expandedCommit = this.expandedCommit;
 		if (expandedCommit === null || expandedCommit.commitElem === null || expandedCommit.commitHash !== commitDetails.hash || expandedCommit.compareWithHash !== null) return;
 
-		expandedCommit.aiAnalysis = commitDetails.aiAnalysis || null;
+		// 🚀 优化：只在没有现有AI分析时才设置新的AI分析，避免重置缓存命中的结果
+		if (expandedCommit.aiAnalysis === null || expandedCommit.aiAnalysis === undefined) {
+			expandedCommit.aiAnalysis = commitDetails.aiAnalysis || null;
+		}
 
 		if (!this.isCdvDocked()) {
 			const elem = document.getElementById('cdv');
@@ -2787,8 +2790,8 @@ class GitGraphView {
 		if (!refresh) {
 			expandedCommit.lastViewedFile = lastViewedFile;
 		}
-		// Store AI analysis for comparison
-		if (aiAnalysis !== undefined) {
+		// 🚀 优化：只在没有现有AI分析时才设置新的AI分析，避免重置缓存命中的结果
+		if (aiAnalysis !== undefined && (expandedCommit.aiAnalysis === null || expandedCommit.aiAnalysis === undefined)) {
 			expandedCommit.aiAnalysis = aiAnalysis;
 		}
 		expandedCommit.commitElem.classList.add(CLASS_COMMIT_DETAILS_OPEN);

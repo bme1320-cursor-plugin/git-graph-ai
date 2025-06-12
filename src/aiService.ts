@@ -91,8 +91,11 @@ export function analyzeDiff(
 		logger?.log(`[AI Service] Starting AI analysis request (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
 		logger?.log(`[AI Service] Request data - AnalysisContext: ${analysisContext}, DiffLength: ${fileDiff?.length || 0} chars`);
 
-		// 检查输入有效性
-		if (!fileDiff || fileDiff.trim() === '') {
+		// 🚀 优化：检查是否只需要进行缓存检查
+		const isCacheCheckOnly = analysisContext === 'cache_check_only' && (!fileDiff || fileDiff.trim() === '');
+
+		// 检查输入有效性（但允许缓存检查模式）
+		if (!isCacheCheckOnly && (!fileDiff || fileDiff.trim() === '')) {
 			logger?.log(`[AI Service] Skipping empty diff for: ${analysisContext}`);
 			resolve(null);
 			return;
@@ -117,7 +120,19 @@ export function analyzeDiff(
 				return;
 			} else {
 				logger?.log(`[AI Service] Cache miss for: ${analysisContext}`);
+
+				// 如果是仅缓存检查模式且未命中，直接返回 null
+				if (isCacheCheckOnly) {
+					logger?.log('[AI Service] Cache check only mode - no cached result found');
+					resolve(null);
+					return;
+				}
 			}
+		} else if (isCacheCheckOnly) {
+			// 如果缓存管理器不可用且是仅缓存检查模式，直接返回 null
+			logger?.log('[AI Service] Cache check only mode - cache manager not available');
+			resolve(null);
+			return;
 		}
 
 		const postData = JSON.stringify({

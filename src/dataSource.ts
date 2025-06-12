@@ -401,6 +401,32 @@ export class DataSource extends Disposable {
 
 			this.logger.log(`Starting AI analysis for commit: ${commitHash}`);
 
+			// 🚀 优化：优先检查缓存，避免不必要的文件处理
+			// 使用基本的 commit 信息先构建初步的缓存键进行快速检查
+			const quickCacheKeyParams = {
+				analysisType: 'comprehensive_commit_analysis',
+				commitHash: commitDetails.hash,
+				additionalContext: {
+					author: commitDetails.author || 'unknown',
+					// 使用文件变更的基本信息作为指纹，避免需要过滤所有文件
+					fileChangesCount: commitDetails.fileChanges.length.toString()
+				}
+			};
+
+			// 先尝试快速缓存检查
+			const cachedAnalysis = await this.checkCacheQuickly(quickCacheKeyParams);
+			if (cachedAnalysis) {
+				this.logger.log(`[Cache Hit] Found cached analysis for commit ${commitHash}, skipping file processing`);
+				this.sendAIAnalysisUpdate(commitHash, null, {
+					...cachedAnalysis,
+					status: 'completed',
+					fromCache: true
+				});
+				return;
+			}
+
+			this.logger.log(`[Cache Miss] No cached analysis found for commit ${commitHash}, proceeding with file analysis`);
+
 			// 发送初始进度更新
 			this.sendAIAnalysisUpdate(commitHash, null, {
 				status: 'analyzing',
@@ -732,6 +758,32 @@ export class DataSource extends Disposable {
 
 			this.logger.log('Starting AI analysis for uncommitted changes');
 
+			// 🚀 优化：优先检查缓存，避免不必要的文件处理
+			// 对于 uncommitted changes，我们使用时间戳来避免过度缓存，但仍然提供短期缓存
+			const quickCacheKeyParams = {
+				analysisType: 'comprehensive_uncommitted_analysis',
+				commitHash: 'UNCOMMITTED',
+				additionalContext: {
+					fileChangesCount: commitDetails.fileChanges.length.toString(),
+					// 使用 5 分钟的时间窗口，减少对快速变化的 uncommitted changes 的缓存依赖
+					timestamp: Math.floor(Date.now() / (5 * 60 * 1000)).toString()
+				}
+			};
+
+			// 先尝试快速缓存检查
+			const cachedAnalysis = await this.checkCacheQuickly(quickCacheKeyParams);
+			if (cachedAnalysis) {
+				this.logger.log('[Cache Hit] Found cached uncommitted analysis, skipping file processing');
+				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
+					...cachedAnalysis,
+					status: 'completed',
+					fromCache: true
+				});
+				return;
+			}
+
+			this.logger.log('[Cache Miss] No cached uncommitted analysis found, proceeding with file analysis');
+
 			// 发送初始进度更新
 			this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
 				status: 'analyzing',
@@ -822,7 +874,7 @@ export class DataSource extends Disposable {
 			}
 
 			// 生成 AI 分析
-			const analysis = await this.generateComprehensiveUncommittedAnalysis(fileAnalysisData, this.logger);
+			const analysis = await this.generateComprehensiveUncommittedAnalysis(fileAnalysisData, commitDetails.fileChanges.length, this.logger);
 
 			if (analysis) {
 				this.sendAIAnalysisUpdate(UNCOMMITTED, null, {
@@ -907,6 +959,7 @@ export class DataSource extends Disposable {
 	/**
 	 * Generate comprehensive uncommitted changes analysis using AI service
 	 * @param fileAnalysisData Array of file analysis data
+	 * @param totalFileChanges Total number of uncommitted file changes
 	 * @param logger Logger instance
 	 * @returns AI analysis result
 	 */
@@ -918,6 +971,7 @@ export class DataSource extends Disposable {
 			contentAfter: string | null;
 			type: GitFileStatus;
 		}>,
+		totalFileChanges: number,
 		logger: Logger
 	): Promise<{ summary: string } | null> {
 		try {
@@ -943,8 +997,10 @@ export class DataSource extends Disposable {
 				analysisType: 'comprehensive_uncommitted_analysis',
 				commitHash: 'UNCOMMITTED',
 				additionalContext: {
-					fileCount: fileAnalysisData.length.toString(),
-					timestamp: Math.floor(Date.now() / 60000).toString() // 分钟级别的时间戳，避免频繁变化
+					// 修正：使用 fileChangesCount 以匹配快速缓存检查
+					fileChangesCount: totalFileChanges.toString(),
+					// 修正：使用 5 分钟的时间窗口以匹配快速缓存检查
+					timestamp: Math.floor(Date.now() / (5 * 60 * 1000)).toString()
 				}
 			};
 
@@ -1045,6 +1101,31 @@ export class DataSource extends Disposable {
 			}
 
 			this.logger.log(`Starting comparison analysis between ${fromHash} and ${toHash}`);
+
+			// 🚀 优化：优先检查缓存，避免不必要的文件处理
+			// 使用基本的 comparison 信息先构建初步的缓存键进行快速检查
+			const quickCacheKeyParams = {
+				analysisType: 'comprehensive_comparison_analysis',
+				commitHash: fromHash,
+				compareWithHash: toHash === '' ? 'WORKING_TREE' : toHash,
+				additionalContext: {
+					fileChangesCount: fileChanges.length.toString()
+				}
+			};
+
+			// 先尝试快速缓存检查
+			const cachedAnalysis = await this.checkCacheQuickly(quickCacheKeyParams);
+			if (cachedAnalysis) {
+				this.logger.log(`[Cache Hit] Found cached comparison analysis for ${fromHash}..${toHash}, skipping file processing`);
+				this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
+					...cachedAnalysis,
+					status: 'completed',
+					fromCache: true
+				});
+				return;
+			}
+
+			this.logger.log(`[Cache Miss] No cached comparison analysis found for ${fromHash}..${toHash}, proceeding with file analysis`);
 
 			// 发送初始进度更新
 			this.sendAIAnalysisUpdate(originalCommitHash, originalCompareWithHash, {
@@ -1327,7 +1408,8 @@ export class DataSource extends Disposable {
 				analysisType: 'comprehensive_commit_analysis',
 				commitHash: commitDetails.hash,
 				additionalContext: {
-					fileCount: fileAnalysisData.length.toString(),
+					// 修正：使用 fileChangesCount 和总文件变更数，以匹配快速缓存检查
+					fileChangesCount: (commitDetails.fileChanges?.length || fileAnalysisData.length).toString(),
 					author: commitDetails.author || 'unknown'
 				}
 			};
@@ -1406,8 +1488,8 @@ export class DataSource extends Disposable {
 				commitHash: fromHash,
 				compareWithHash: toHash === '' ? 'WORKING_TREE' : toHash, // 空字符串表示工作树
 				additionalContext: {
-					fileCount: fileAnalysisData.length.toString(),
-					totalChanges: fileChanges.length.toString()
+					// 修正：使用 fileChangesCount 以匹配快速缓存检查
+					fileChangesCount: fileChanges.length.toString()
 				}
 			};
 
@@ -3661,6 +3743,59 @@ export class DataSource extends Disposable {
 			// 使用特殊的commitHash格式来标识这是文件版本比较的AI分析
 			const specialCommitHash = `file_comparison:${filePath}:${fromHash}:${toHash}`;
 			this.aiAnalysisUpdateCallback(specialCommitHash, null, analysis);
+		}
+	}
+
+	/**
+	 * Quick cache check without file processing
+	 * @param cacheKeyParams Cache key parameters for quick check
+	 * @returns Cached analysis if found, null otherwise
+	 */
+	private async checkCacheQuickly(cacheKeyParams: any): Promise<{ summary: string } | null> {
+		try {
+			// 动态导入 aiService 以避免循环依赖
+			const { analyzeDiff } = await import('./aiService');
+
+			// 使用空的 diff 内容进行缓存检查，这样 analyzeDiff 只会检查缓存而不会实际调用 AI 服务
+			// 这是一个优化技巧：利用现有的缓存机制进行快速检查
+			const result = await analyzeDiff(
+				'cache_check_only', // 特殊的 analysis context 标识这是缓存检查
+				'', // 空 diff，不会触发 AI 调用
+				null,
+				null,
+				cacheKeyParams,
+				this.logger,
+				1000, // 短超时，因为这只是缓存检查
+				0
+			);
+
+			if (result) {
+				// 🚀 优化：确保缓存命中时返回的格式与新分析一致
+				// 检查是否已经包含正确的HTML结构
+				const analysisType = cacheKeyParams.analysisType || 'comprehensive_commit_analysis';
+
+				if (analysisType === 'comprehensive_comparison_analysis') {
+					// 比较分析
+					if (!result.summary.includes('<div class="ai-comparison-summary">')) {
+						return {
+							summary: `<div class="ai-comparison-summary">${result.summary}</div>`
+						};
+					}
+				} else {
+					// 提交分析（包括uncommitted）
+					if (!result.summary.includes('<div class="ai-commit-summary">')) {
+						return {
+							summary: `<div class="ai-commit-summary">${result.summary}</div>`
+						};
+					}
+				}
+			}
+
+			return result;
+		} catch (error) {
+			// 如果快速检查失败，记录日志但不阻止后续处理
+			this.logger.log(`[Quick Cache Check] Failed: ${error}, proceeding with normal analysis`);
+			return null;
 		}
 	}
 }
