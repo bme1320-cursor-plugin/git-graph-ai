@@ -80,14 +80,14 @@ def analyze_diff():
             return jsonify({"error": "Missing data in request"}), 400
         
         # 检查是否是综合分析请求
-        if 'file_path' in data and data['file_path'] in ['comprehensive_commit_analysis', 'comprehensive_comparison_analysis', 'comprehensive_uncommitted_analysis']:
+        if 'analysis_context' in data and data['analysis_context'] in ['comprehensive_commit_analysis', 'comprehensive_comparison_analysis', 'comprehensive_uncommitted_analysis']:
             return handle_comprehensive_analysis(data)
         
         # 原有的单文件分析逻辑
-        if 'file_diff' not in data or 'file_path' not in data:
-            return jsonify({"error": "Missing or invalid data in request (requires file_path and file_diff)"}), 400
+        if 'file_diff' not in data or 'analysis_context' not in data:
+            return jsonify({"error": "Missing or invalid data in request (requires analysis_context and file_diff)"}), 400
         
-        file_path = data['file_path']
+        analysis_context = data['analysis_context']
         file_diff = data['file_diff']
         
         # 检查diff内容是否为空
@@ -98,17 +98,17 @@ def analyze_diff():
                 }
             })
 
-        print(f"Received request to analyze diff for: {file_path}")
-        file_path = file_path.strip()
+        print(f"Received request to analyze diff for: {analysis_context}")
+        analysis_context = analysis_context.strip()
         
-        # 获取文件类型和扩展名
-        file_extension = file_path.split('.')[-1].lower() if '.' in file_path else ''
-        file_name = file_path.split('/')[-1]
+        # 获取文件类型和扩展名（如果是文件路径的话）
+        file_extension = analysis_context.split('.')[-1].lower() if '.' in analysis_context else ''
+        context_name = analysis_context.split('/')[-1]
         
         # --- AI API Call --- 
         try:
             # 改进的提示词，更加具体和有针对性
-            prompt = prompts.build_analyze_diff_prompt(file_path, file_extension, file_name, file_diff)
+            prompt = prompts.build_analyze_diff_prompt(analysis_context, file_extension, context_name, file_diff)
 
             # 使用模型管理器调用AI API
             ai_summary = model_manager.chat_completion(
@@ -122,10 +122,10 @@ def analyze_diff():
                 temperature=0.3
             )
 
-            print(f"AI Summary for {file_path}: {ai_summary}")
+            print(f"AI Summary for {analysis_context}: {ai_summary}")
 
         except Exception as e:
-            print(f"AI API error for {file_path}: {e}")
+            print(f"AI API error for {analysis_context}: {e}")
             ai_summary = f"AI分析暂时不可用：{str(e)}"
         # -----------------------
 
@@ -144,7 +144,7 @@ def analyze_diff():
 def handle_comprehensive_analysis(data):
     """处理通用的综合性分析请求"""
     try:
-        file_path_marker = data.get('file_path')
+        analysis_context_marker = data.get('analysis_context')
         payload_str = data.get('file_diff', '{}')
         payload = json.loads(payload_str)
 
@@ -154,10 +154,10 @@ def handle_comprehensive_analysis(data):
             'comprehensive_comparison_analysis': prompts.build_comprehensive_comparison_prompt
         }
 
-        builder = prompt_builders.get(file_path_marker)
+        builder = prompt_builders.get(analysis_context_marker)
         
         if not builder:
-            return jsonify({"error": f"Invalid comprehensive analysis type: {file_path_marker}"}), 400
+            return jsonify({"error": f"Invalid comprehensive analysis type: {analysis_context_marker}"}), 400
             
         prompt = builder(payload)
         
@@ -228,12 +228,12 @@ def analyze_file_history():
         # 接收原始数据负载，而不是预构建的提示
         payload_str = data.get('file_diff', '{}') 
         payload = json.loads(payload_str)
-        file_path = payload.get('filePath', '未知文件')
+        analysis_context = data.get('analysis_context', '未知文件')
 
         if not payload.get('commits'):
             return jsonify({"error": "Missing commits data for file history analysis"}), 400
         
-        print(f"Received file history analysis request for: {file_path}")
+        print(f"Received file history analysis request for: {analysis_context}")
         
         # 在后端构建提示
         base_prompt = prompts.build_file_history_analysis_prompt(payload)
@@ -257,7 +257,7 @@ def analyze_file_history():
                 temperature=0.2
             )
 
-            print(f"File History Analysis Raw Response for {file_path}: {ai_summary}")
+            print(f"File History Analysis Raw Response for {analysis_context}: {ai_summary}")
 
             # 尝试验证返回的是有效的JSON
             try:
@@ -265,11 +265,11 @@ def analyze_file_history():
                 if not all(key in test_parse for key in ['summary', 'evolutionPattern', 'keyChanges', 'recommendations']):
                     raise ValueError("Missing required fields in AI response")
             except (json.JSONDecodeError, ValueError):
-                print(f"Invalid JSON response for {file_path}, using fallback")
+                print(f"Invalid JSON response for {analysis_context}, using fallback")
                 ai_summary = generate_fallback_analysis("AI返回的数据格式不正确，已使用默认分析。")
 
         except Exception as e:
-            print(f"AI API error for file history analysis {file_path}: {e}")
+            print(f"AI API error for file history analysis {analysis_context}: {e}")
             ai_summary = generate_fallback_analysis(f"AI分析时发生错误：{str(e)}")
 
         return jsonify({
@@ -303,12 +303,12 @@ def analyze_file_version_comparison():
         # 接收原始数据负载
         payload_str = data.get('file_diff', '{}') 
         payload = json.loads(payload_str)
-        file_path = payload.get('filePath', '未知文件')
+        analysis_context = data.get('analysis_context', '未知文件')
 
         if not payload.get('contentBefore') and not payload.get('contentAfter'):
             return jsonify({"error": "Missing file content data for version comparison"}), 400
         
-        print(f"Received file version comparison request for: {file_path}")
+        print(f"Received file version comparison request for: {analysis_context}")
         
         # 构建版本比较分析提示
         prompt = prompts.build_file_version_comparison_prompt(payload)
@@ -329,10 +329,10 @@ def analyze_file_version_comparison():
                 temperature=0.3
             )
 
-            print(f"File Version Comparison Analysis for {file_path}: {ai_summary}")
+            print(f"File Version Comparison Analysis for {analysis_context}: {ai_summary}")
 
         except Exception as e:
-            print(f"AI API error for file version comparison {file_path}: {e}")
+            print(f"AI API error for file version comparison {analysis_context}: {e}")
             ai_summary = f"AI分析时发生错误：{str(e)}"
 
         return jsonify({
@@ -369,16 +369,16 @@ def analyze_batch():
         analyses = []
         
         for file_data in files:
-            if 'file_path' not in file_data or 'file_diff' not in file_data:
+            if 'analysis_context' not in file_data or 'file_diff' not in file_data:
                 continue
             
-            file_path = file_data['file_path']
+            analysis_context = file_data['analysis_context']
             file_diff = file_data['file_diff']
             
             # 跳过空的diff
             if not file_diff or file_diff.strip() == '':
                 analyses.append({
-                    "file_path": file_path,
+                    "analysis_context": analysis_context,
                     "analysis": {
                         "summary": "文件无实质性变更。"
                     }
@@ -387,11 +387,11 @@ def analyze_batch():
             
             try:
                 # 获取文件类型和扩展名
-                file_extension = file_path.split('.')[-1].lower() if '.' in file_path else ''
-                file_name = file_path.split('/')[-1]
+                file_extension = analysis_context.split('.')[-1].lower() if '.' in analysis_context else ''
+                context_name = analysis_context.split('/')[-1]
                 
                 # 构建提示词
-                prompt = prompts.build_analyze_diff_prompt(file_path, file_extension, file_name, file_diff)
+                prompt = prompts.build_analyze_diff_prompt(analysis_context, file_extension, context_name, file_diff)
                 
                 # AI分析
                 ai_summary = model_manager.chat_completion(
@@ -406,16 +406,16 @@ def analyze_batch():
                 )
                 
                 analyses.append({
-                    "file_path": file_path,
+                    "analysis_context": analysis_context,
                     "analysis": {
                         "summary": ai_summary,
                     }
                 })
                 
             except Exception as e:
-                print(f"Error analyzing {file_path}: {e}")
+                print(f"Error analyzing {analysis_context}: {e}")
                 analyses.append({
-                    "file_path": file_path,
+                    "analysis_context": analysis_context,
                     "analysis": {
                         "summary": f"分析失败：{str(e)}"
                     }

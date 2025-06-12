@@ -65,7 +65,9 @@ export async function clearCache(): Promise<void> {
 
 /**
  * Calls the Python AI service to analyze a file diff with enhanced error handling.
- * @param filePath The path of the file being diffed.
+ * @param analysisContext The context identifier for the analysis. Can be either:
+ *                        - A file path (e.g., "src/components/Button.tsx") for individual file analysis
+ *                        - An analysis type identifier (e.g., "comprehensive_commit_analysis") for broader analysis
  * @param fileDiff The raw diff content.
  * @param contentBefore Content before changes (optional, might be useful for AI).
  * @param contentAfter Content after changes (optional, might be useful for AI).
@@ -75,7 +77,7 @@ export async function clearCache(): Promise<void> {
  * @returns A Promise resolving to the AIAnalysis object or null if analysis fails.
  */
 export function analyzeDiff(
-	filePath: string,
+	analysisContext: string,
 	fileDiff: string,
 	contentBefore: string | null,
 	contentAfter: string | null,
@@ -85,32 +87,32 @@ export function analyzeDiff(
 ): Promise<{ summary: string } | null> {
 	return new Promise(async (resolve) => {
 		logger?.log(`[AI Service] Starting AI analysis request (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
-		logger?.log(`[AI Service] Request data - FilePath: ${filePath}, DiffLength: ${fileDiff?.length || 0} chars`);
+		logger?.log(`[AI Service] Request data - AnalysisContext: ${analysisContext}, DiffLength: ${fileDiff?.length || 0} chars`);
 
 		// 检查输入有效性
 		if (!fileDiff || fileDiff.trim() === '') {
-			logger?.log(`[AI Service] Skipping empty diff for: ${filePath}`);
+			logger?.log(`[AI Service] Skipping empty diff for: ${analysisContext}`);
 			resolve(null);
 			return;
 		}
 
 		// 尝试从缓存获取结果
 		if (cacheManager) {
-			const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
+			const cacheKey = cacheManager.generateCacheKey(fileDiff, analysisContext);
 			logger?.log(`[AI Service] Checking cache with key: ${cacheKey.substring(0, 16)}...`);
 
 			const cachedResult = await cacheManager.get(cacheKey);
 			if (cachedResult && cachedResult.summary) {
-				logger?.log(`[AI Service] Cache hit for: ${filePath}`);
+				logger?.log(`[AI Service] Cache hit for: ${analysisContext}`);
 				resolve(cachedResult);
 				return;
 			} else {
-				logger?.log(`[AI Service] Cache miss for: ${filePath}`);
+				logger?.log(`[AI Service] Cache miss for: ${analysisContext}`);
 			}
 		}
 
 		const postData = JSON.stringify({
-			file_path: filePath,
+			analysis_context: analysisContext,
 			file_diff: fileDiff,
 			content_before: contentBefore,
 			content_after: contentAfter
@@ -128,7 +130,7 @@ export function analyzeDiff(
 			timeout: timeout
 		};
 
-		logger?.log(`[AI Service] Sending HTTP request to AI service for: ${filePath}`);
+		logger?.log(`[AI Service] Sending HTTP request to AI service for: ${analysisContext}`);
 		const requestStartTime = Date.now();
 
 		const req = http.request(options, (res) => {
@@ -151,24 +153,24 @@ export function analyzeDiff(
 
 						if (parsedData && parsedData.analysis && parsedData.analysis.summary) {
 							const analysis = { summary: parsedData.analysis.summary };
-							logger?.log(`[AI Service] Valid analysis received for: ${filePath}`);
+							logger?.log(`[AI Service] Valid analysis received for: ${analysisContext}`);
 
 							// 缓存结果
 							if (cacheManager) {
-								const cacheKey = cacheManager.generateCacheKey(fileDiff, filePath);
+								const cacheKey = cacheManager.generateCacheKey(fileDiff, analysisContext);
 								await cacheManager.set(cacheKey, analysis);
-								logger?.log(`[AI Service] Result cached for: ${filePath}`);
+								logger?.log(`[AI Service] Result cached for: ${analysisContext}`);
 							}
 
 							resolve(analysis);
 						} else {
-							logger?.logError(`[AI Service] Invalid response format from AI service for ${filePath}`);
+							logger?.logError(`[AI Service] Invalid response format from AI service for ${analysisContext}`);
 
 							// 重试逻辑
 							if (retryCount < MAX_RETRIES) {
-								logger?.log(`[AI Service] Retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+								logger?.log(`[AI Service] Retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 								setTimeout(() => {
-									analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+									analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
 										.then(resolve);
 								}, 1000 * (retryCount + 1)); // Exponential backoff
 							} else {
@@ -176,13 +178,13 @@ export function analyzeDiff(
 							}
 						}
 					} catch (e: any) {
-						logger?.logError(`[AI Service] Error parsing JSON response for ${filePath}: ${e}`);
+						logger?.logError(`[AI Service] Error parsing JSON response for ${analysisContext}: ${e}`);
 
 						// 重试逻辑
 						if (retryCount < MAX_RETRIES) {
-							logger?.log(`[AI Service] Retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+							logger?.log(`[AI Service] Retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 							setTimeout(() => {
-								analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+								analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
 									.then(resolve);
 							}, 1000 * (retryCount + 1));
 						} else {
@@ -190,13 +192,13 @@ export function analyzeDiff(
 						}
 					}
 				} else {
-					logger?.logError(`[AI Service] Request failed for ${filePath} - Status Code: ${res.statusCode}`);
+					logger?.logError(`[AI Service] Request failed for ${analysisContext} - Status Code: ${res.statusCode}`);
 
 					// 重试逻辑 for 5xx errors
 					if (res.statusCode && res.statusCode >= 500 && retryCount < MAX_RETRIES) {
-						logger?.log(`[AI Service] Server error, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+						logger?.log(`[AI Service] Server error, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 						setTimeout(() => {
-							analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+							analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
 								.then(resolve);
 						}, 1000 * (retryCount + 1));
 					} else {
@@ -207,13 +209,13 @@ export function analyzeDiff(
 		});
 
 		req.on('error', (err) => {
-			logger?.logError(`[AI Service] Request error for ${filePath}: ${err.message}`);
+			logger?.logError(`[AI Service] Request error for ${analysisContext}: ${err.message}`);
 
 			// 重试逻辑 for network errors
 			if (retryCount < MAX_RETRIES) {
-				logger?.log(`[AI Service] Network error, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+				logger?.log(`[AI Service] Network error, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 				setTimeout(() => {
-					analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
+					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout, retryCount + 1)
 						.then(resolve);
 				}, 1000 * (retryCount + 1));
 			} else {
@@ -222,14 +224,14 @@ export function analyzeDiff(
 		});
 
 		req.on('timeout', () => {
-			logger?.logError(`[AI Service] Request timeout for ${filePath} after ${timeout}ms`);
+			logger?.logError(`[AI Service] Request timeout for ${analysisContext} after ${timeout}ms`);
 			req.destroy();
 
 			// 重试逻辑 for timeouts
 			if (retryCount < MAX_RETRIES) {
-				logger?.log(`[AI Service] Timeout, retrying request for ${filePath} (${retryCount + 1}/${MAX_RETRIES})`);
+				logger?.log(`[AI Service] Timeout, retrying request for ${analysisContext} (${retryCount + 1}/${MAX_RETRIES})`);
 				setTimeout(() => {
-					analyzeDiff(filePath, fileDiff, contentBefore, contentAfter, logger, timeout * 1.5, retryCount + 1) // Increase timeout
+					analyzeDiff(analysisContext, fileDiff, contentBefore, contentAfter, logger, timeout * 1.5, retryCount + 1) // Increase timeout
 						.then(resolve);
 				}, 1000 * (retryCount + 1));
 			} else {
@@ -338,7 +340,7 @@ export function analyzeFileHistory(
 		}
 
 		const postData = JSON.stringify({
-			file_path: filePath,
+			analysis_context: filePath,
 			file_diff: payloadString // 复用这个字段传递完整的JSON负载
 		});
 
@@ -448,7 +450,7 @@ export function analyzeFileVersionComparison(
 		}
 
 		const postData = JSON.stringify({
-			file_path: filePath,
+			analysis_context: filePath,
 			file_diff: payloadString // 复用这个字段传递完整的JSON负载
 		});
 
